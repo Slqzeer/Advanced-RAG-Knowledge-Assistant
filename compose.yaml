@@ -1,0 +1,26 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_REST_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/6333 &&
+          printf 'GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          read -r status <&3 &&
+          [[ "$$status" == *"200 OK"* ]]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  qdrant_storage:
