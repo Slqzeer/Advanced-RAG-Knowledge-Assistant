@@ -9,6 +9,8 @@ from app.models.documents import RawDocument
 
 MARKDOWN_SUFFIXES = (".md", ".markdown")
 HEADING = re.compile(r"^#\s+(.+)$")
+# MkDocs attr-list anchors: "# Title { #slug }".
+ATTR_LIST = re.compile(r"\s*\{[^}]*\}\s*$")
 FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---[ \t]*\r?\n", re.DOTALL)
 
 
@@ -27,7 +29,8 @@ def _extract_title(text: str, path: Path) -> str:
     for line in body.splitlines():
         match = HEADING.match(line)
         if match:
-            return match.group(1).rstrip("#").strip().replace("`", "")
+            title = ATTR_LIST.sub("", match.group(1)).rstrip("#")
+            return title.strip().replace("`", "")
     return path.stem.replace("-", " ").replace("_", " ").title()
 
 
@@ -35,12 +38,14 @@ def load_document(path: Path, root: Path, source: str, base_url: str | None = No
     text = path.read_text(encoding="utf-8", errors="replace")
     relative = path.relative_to(root).as_posix()
     stem = relative[: -len(path.suffix)]
+    # MkDocs serves "a/index.md" at "/a/" and "index.md" at "/".
+    slug = "" if stem == "index" else stem.removesuffix("/index")
     return RawDocument(
         document_id=f"{source}:{stem}",
         source=source,
         title=_extract_title(text, path),
         path=relative,
-        url=f"{base_url}/{stem}/" if base_url else None,
+        url=None if base_url is None else f"{base_url}/{slug}/" if slug else f"{base_url}/",
         text=text,
         content_hash=hashlib.sha256(path.read_bytes()).hexdigest(),
     )

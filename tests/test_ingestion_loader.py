@@ -45,6 +45,11 @@ def test_document_id_and_url_use_forward_slashes() -> None:
     assert document.url == "https://fastapi.tiangolo.com/docs/tutorial/dependencies/"
 
 
+def test_index_url_drops_the_index_segment() -> None:
+    document = next(d for d in _load() if d.document_id == "fastapi:docs/index")
+    assert document.url == "https://fastapi.tiangolo.com/docs/"
+
+
 def test_front_matter_does_not_leak_into_title() -> None:
     titles = {d.title for d in _load()}
     assert titles == {"First Steps", "Dependencies", "FastAPI"}
