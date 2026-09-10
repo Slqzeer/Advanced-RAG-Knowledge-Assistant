@@ -1,7 +1,7 @@
 [project]
 name = "advanced-rag-knowledge-assistant"
 version = "0.1.0"
-description = "Assistant documentaire technique fondÃ© sur une architecture RAG avancÃ©e."
+description = "Assistant documentaire technique fondé sur une architecture RAG avancée."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.116,<1",
