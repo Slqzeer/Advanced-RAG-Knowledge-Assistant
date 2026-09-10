@@ -24,14 +24,16 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 0 — socle du projet.** L'environnement Python, les contrôles de qualité et le service Qdrant local sont disponibles. Aucun endpoint ni pipeline RAG n'est encore implémenté.
+**Phase 1, étape 02 — ingestion documentaire.** Le corpus est récupérable et chargeable en objets `RawDocument` validés. Aucun nettoyage, chunking, embedding ni endpoint n'est encore implémenté.
 
 Fonctionnalités disponibles :
 
 - environnement Python 3.12 reproductible avec `uv` ;
 - formatage, lint, vérification de types et tests locaux ;
 - hooks pre-commit optionnels ;
-- instance Qdrant locale persistante avec Docker Compose.
+- instance Qdrant locale persistante avec Docker Compose ;
+- récupération du corpus FastAPI (155 fichiers Markdown) via `scripts/fetch_corpus.py` ;
+- chargement en `RawDocument` triés et reproductibles via `app.ingestion.loader`.
 
 ## Pipeline cible
 
@@ -119,6 +121,9 @@ uv run pytest
 uv run pre-commit install
 uv run pre-commit run --all-files
 
+# Récupérer le corpus (écrit dans data/raw/, non versionné)
+uv run python scripts/fetch_corpus.py
+
 # Gérer Qdrant
 docker compose up -d qdrant --wait
 docker compose ps
@@ -134,8 +139,8 @@ docker compose down
 │   ├── core/         # future configuration partagée
 │   ├── evaluation/   # futures métriques RAG
 │   ├── generation/   # future génération de réponses
-│   ├── ingestion/    # futur chargement documentaire
-│   ├── models/       # futurs modèles de données
+│   ├── ingestion/    # chargement documentaire
+│   ├── models/       # modèles de données
 │   └── retrieval/    # future recherche documentaire
 ├── data/
 │   ├── raw/          # sources locales non versionnées
@@ -143,7 +148,7 @@ docker compose down
 ├── docker/           # futurs fichiers de conteneurisation
 ├── docs/             # spécifications et plans
 ├── notebooks/        # futures expérimentations
-├── scripts/          # futurs outils ponctuels
+├── scripts/          # outils ponctuels (récupération du corpus)
 ├── tests/            # tests automatisés
 ├── compose.yaml      # service Qdrant local
 └── pyproject.toml    # projet et outils Python
@@ -152,7 +157,7 @@ docker compose down
 ## Roadmap
 
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
-- [ ] **Phase 1 — RAG minimal** : ingestion, chunking, embeddings, recherche vectorielle et réponse.
+- [ ] **Phase 1 — RAG minimal** : ingestion (fait), chunking, embeddings, recherche vectorielle et réponse.
 - [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
 - [ ] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG.

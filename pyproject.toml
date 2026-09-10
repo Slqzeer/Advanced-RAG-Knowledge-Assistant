@@ -23,6 +23,8 @@ package = false
 
 [tool.ruff]
 line-length = 100
+# Plans and specs are prose; their code blocks are sketches, not source.
+extend-exclude = ["docs"]
 target-version = "py312"
 
 [tool.ruff.lint]
