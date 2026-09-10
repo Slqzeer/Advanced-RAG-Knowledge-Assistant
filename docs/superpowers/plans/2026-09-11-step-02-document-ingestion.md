@@ -31,21 +31,21 @@
 
 ### Task 1: The document model
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `tests/test_ingestion_loader.py`, one test: `RawDocument` rejects empty `text` and empty `document_id`. Run `uv run pytest` → FAIL on import.
 
-- [ ] **Step 2: Write `app/models/documents.py`**
+- [x] **Step 2: Write `app/models/documents.py`**
 
 A frozen pydantic model. Fields: `document_id: str`, `source: str`, `title: str`, `path: str` (relative, forward slashes), `url: str | None`, `language: str = "en"`, `text: str`, `content_hash: str`. Constrain `document_id` and `text` with `min_length=1`.
 
 Keep `url` nullable. A locally dropped file has no URL, and pretending otherwise produces citations that link nowhere.
 
-- [ ] **Step 3: Test passes.** Commit: `feat(ingestion): add RawDocument model`.
+- [x] **Step 3: Test passes.** Commit: `feat(ingestion): add RawDocument model`.
 
 ### Task 2: The loader
 
-- [ ] **Step 1: Build the fixture tree**
+- [x] **Step 1: Build the fixture tree**
 
 Under `tests/data/corpus/fastapi/`, four small files:
 
@@ -58,7 +58,7 @@ docs/img/logo.png                 # must be ignored
 
 Commit them. This is the only corpus the test suite touches, so tests stay offline and deterministic.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 1. Loading the fixture root yields exactly 3 documents; the `.png` is excluded.
 2. `document_id == "fastapi:docs/tutorial/dependencies"` — forward slashes on Windows too.
@@ -67,7 +67,7 @@ Commit them. This is the only corpus the test suite touches, so tests stay offli
 5. `content_hash` is stable across two loads and differs between two documents.
 6. Two loads return the same order (sorted by `document_id`).
 
-- [ ] **Step 3: Write `app/ingestion/loader.py`**
+- [x] **Step 3: Write `app/ingestion/loader.py`**
 
 ```python
 def iter_markdown_files(root: Path) -> Iterator[Path]: ...
@@ -81,11 +81,11 @@ Title extraction: first line matching `^#\s+(.+)$`, searched **after** skipping 
 
 `url`: `f"{base_url}/{relative_path_without_suffix}/"` when `base_url` is given, else `None`.
 
-- [ ] **Step 4: Tests pass, `mypy app` clean.** Commit: `feat(ingestion): load markdown documents from disk`.
+- [x] **Step 4: Tests pass, `mypy app` clean.** Commit: `feat(ingestion): load markdown documents from disk`.
 
 ### Task 3: Corpus acquisition script
 
-- [ ] **Step 1: Write `scripts/fetch_corpus.py`**
+- [x] **Step 1: Write `scripts/fetch_corpus.py`**
 
 A module-level list is the entire configuration:
 
@@ -104,7 +104,7 @@ Per source: `git clone --depth 1 --filter=blob:none --sparse` into a temp direct
 
 Use `subprocess.run(argv_list, check=True)`. Never `shell=True`.
 
-- [ ] **Step 2: Run it for real**
+- [x] **Step 2: Run it for real**
 
 ```powershell
 uv run python scripts/fetch_corpus.py
@@ -113,7 +113,7 @@ uv run python -c "from pathlib import Path; print(sum(1 for _ in Path('data/raw/
 
 Expected: several hundred Markdown files. `data/raw/*` is already gitignored, so nothing is committed.
 
-- [ ] **Step 3: Smoke-load the real corpus**
+- [x] **Step 3: Smoke-load the real corpus**
 
 ```powershell
 uv run python -c "from pathlib import Path; from app.ingestion.loader import load_documents; d = load_documents(Path('data/raw/fastapi'), 'fastapi', 'https://fastapi.tiangolo.com'); print(len(d), d[0].document_id, d[0].title)"
@@ -121,12 +121,12 @@ uv run python -c "from pathlib import Path; from app.ingestion.loader import loa
 
 Expected: a plausible count and a real title. If titles come back as filename fallbacks everywhere, the front-matter skip is wrong — fix it before moving on.
 
-- [ ] **Step 4: Commit.** `feat(ingestion): add corpus fetch script`.
+- [x] **Step 4: Commit.** `feat(ingestion): add corpus fetch script`.
 
 ### Task 4: Documentation
 
-- [ ] **Step 1: Update `README.md`** — current state mentions step 02 with the real document count; tick the ingestion part of the Phase 1 roadmap line; add `uv run python scripts/fetch_corpus.py` to the commands section, noting it writes into untracked `data/raw/`.
-- [ ] **Step 2: Commit.** `docs: document corpus ingestion`.
+- [x] **Step 1: Update `README.md`** — current state mentions step 02 with the real document count; tick the ingestion part of the Phase 1 roadmap line; add `uv run python scripts/fetch_corpus.py` to the commands section, noting it writes into untracked `data/raw/`.
+- [x] **Step 2: Commit.** `docs: document corpus ingestion`.
 
 ## Verification
 
