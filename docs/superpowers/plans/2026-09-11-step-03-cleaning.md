@@ -28,7 +28,7 @@
 
 ### Task 1: The cleaning pipeline
 
-- [ ] **Step 1: Write the failing tests** — one per rule, each a short literal input and expected output.
+- [x] **Step 1: Write the failing tests** — one per rule, each a short literal input and expected output.
 
 1. **Code fences survive byte-for-byte**, including internal blank lines and indentation. Use a fence containing `raise HTTPException(status_code=422)` and assert that exact substring is present afterwards.
 2. A `~~~`-fenced block survives too.
@@ -45,7 +45,7 @@
 13. `clean_document()` returns `None` for a document whose cleaned prose is shorter than 200 characters.
 14. **Idempotence:** `clean_markdown(clean_markdown(x)) == clean_markdown(x)` for every fixture above.
 
-- [ ] **Step 2: Write `app/ingestion/clean.py`**
+- [x] **Step 2: Write `app/ingestion/clean.py`**
 
 ```python
 MIN_PROSE_LENGTH = 200
@@ -70,11 +70,11 @@ Use a placeholder character that cannot appear in the source (`\x00`) so step 4-
 
 `clean_document` returns a copy with the cleaned text and a recomputed `content_hash`, or `None` when the prose (text minus code blocks) is too short.
 
-- [ ] **Step 3: Tests green, `mypy app` clean.** Commit: `feat(ingestion): clean markdown for retrieval`.
+- [x] **Step 3: Tests green, `mypy app` clean.** Commit: `feat(ingestion): clean markdown for retrieval`.
 
 ### Task 2: Check it against the real corpus
 
-- [ ] **Step 1: Eyeball the worst cases**
+- [x] **Step 1: Eyeball the worst cases**
 
 ```powershell
 uv run python -c "from pathlib import Path; from app.ingestion.loader import load_documents; from app.ingestion.clean import clean_document; docs=[d for d in (clean_document(x) for x in load_documents(Path('data/raw/fastapi'),'fastapi')) if d]; print(len(docs)); print(max(docs,key=lambda d:len(d.text)).text[:1500])"
@@ -82,13 +82,13 @@ uv run python -c "from pathlib import Path; from app.ingestion.loader import loa
 
 Then print the *shortest* surviving document and the dropped count. Read them. You are looking for: mangled code, leftover `{!`, `--8<--`, stray `</div>`, admonition bodies still indented. Add a test for anything you find, then fix it.
 
-- [ ] **Step 2: Record the numbers** in the commit message: documents in, documents dropped, total characters before and after. These are the first real measurements of the project.
+- [x] **Step 2: Record the numbers** in the commit message: documents in, documents dropped, total characters before and after. These are the first real measurements of the project.
 
-- [ ] **Step 3: Commit.** `test(ingestion): cover cleaning edge cases from the real corpus`.
+- [x] **Step 3: Commit.** `test(ingestion): cover cleaning edge cases from the real corpus`.
 
 ### Task 3: Documentation
 
-- [ ] Update `README.md` current state and the Phase 1 roadmap line. State the code-block guarantee explicitly — it is a design promise later steps depend on. Commit: `docs: document the cleaning stage`.
+- [x] Update `README.md` current state and the Phase 1 roadmap line. State the code-block guarantee explicitly — it is a design promise later steps depend on. Commit: `docs: document the cleaning stage`.
 
 ## Verification
 

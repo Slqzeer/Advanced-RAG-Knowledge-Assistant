@@ -24,7 +24,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 1, étape 02 — ingestion documentaire.** Le corpus est récupérable et chargeable en objets `RawDocument` validés. Aucun nettoyage, chunking, embedding ni endpoint n'est encore implémenté.
+**Phase 1, étape 03 — nettoyage.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, puis nettoyé pour l'indexation. Aucun chunking, embedding ni endpoint n'est encore implémenté.
 
 Fonctionnalités disponibles :
 
@@ -33,7 +33,10 @@ Fonctionnalités disponibles :
 - hooks pre-commit optionnels ;
 - instance Qdrant locale persistante avec Docker Compose ;
 - récupération du corpus FastAPI (155 fichiers Markdown) via `scripts/fetch_corpus.py` ;
-- chargement en `RawDocument` triés et reproductibles via `app.ingestion.loader`.
+- chargement en `RawDocument` triés et reproductibles via `app.ingestion.loader` ;
+- nettoyage du Markdown MkDocs via `app.ingestion.clean` : 155 documents en entrée, 8 stubs écartés, 147 conservés, 1 463 414 → 1 041 001 caractères (71 %).
+
+**Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
 ## Pipeline cible
 
@@ -139,7 +142,7 @@ docker compose down
 │   ├── core/         # future configuration partagée
 │   ├── evaluation/   # futures métriques RAG
 │   ├── generation/   # future génération de réponses
-│   ├── ingestion/    # chargement documentaire
+│   ├── ingestion/    # chargement et nettoyage documentaires
 │   ├── models/       # modèles de données
 │   └── retrieval/    # future recherche documentaire
 ├── data/
@@ -157,7 +160,7 @@ docker compose down
 ## Roadmap
 
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
-- [ ] **Phase 1 — RAG minimal** : ingestion (fait), chunking, embeddings, recherche vectorielle et réponse.
+- [ ] **Phase 1 — RAG minimal** : ingestion et nettoyage (faits), chunking, embeddings, recherche vectorielle et réponse.
 - [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
 - [ ] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG.

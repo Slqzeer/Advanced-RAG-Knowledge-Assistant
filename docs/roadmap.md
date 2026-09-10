@@ -8,7 +8,7 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 is done. Step 02 (document ingestion) is next.**
+**Phase 0 and steps 02-03 are done. Step 04 (basic chunking) is next.**
 
 Shipped and verified:
 
@@ -19,8 +19,10 @@ Shipped and verified:
 | Quality gates | Ruff, mypy strict on `app`, pytest, pinned pre-commit hooks |
 | Local Qdrant | `compose.yaml`, pinned `qdrant/qdrant:v1.19.1`, healthcheck, loopback-bound |
 | Smoke test | `tests/test_environment.py` — imports only |
+| FastAPI corpus, fetched and loaded | `scripts/fetch_corpus.py`, `app/ingestion/loader.py` — 155 Markdown files |
+| Markdown cleaning | `app/ingestion/clean.py` — 155 in, 8 stubs dropped, 1 463 414 → 1 041 001 chars (71%), 0 code blocks lost |
 
-There is no application code yet. Not one document loaded, no collection created, no endpoint.
+Nothing is chunked, embedded or indexed yet: no collection, no endpoint.
 
 ## The three rules
 
