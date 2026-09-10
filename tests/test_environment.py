@@ -1,4 +1,4 @@
-from importlib.util import find_spec
+from importlib import import_module
 
 RUNTIME_MODULES = (
     "app",
@@ -10,6 +10,6 @@ RUNTIME_MODULES = (
 
 
 def test_runtime_modules_are_importable() -> None:
-    missing = [name for name in RUNTIME_MODULES if find_spec(name) is None]
-
-    assert missing == [], f"Modules introuvables : {', '.join(missing)}"
+    for module_name in RUNTIME_MODULES:
+        module = import_module(module_name)
+        assert module.__name__ == module_name
