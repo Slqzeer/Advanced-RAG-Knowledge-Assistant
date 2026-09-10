@@ -195,5 +195,7 @@ Chaque future phase doit mettre à jour dans le même changement :
 ## Documentation
 
 - [Brief initial](information.md)
+- [Plan global](docs/roadmap.md) — état actuel, correspondance étapes/phases/versions et index des plans par étape
 - [Spécification du socle](docs/superpowers/specs/2026-09-09-project-foundation-design.md)
 - [Plan d'implémentation du socle](docs/superpowers/plans/2026-09-09-project-foundation.md)
+- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 11 rédigées ; les suivantes sont écrites au début de leur étape
