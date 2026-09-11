@@ -48,15 +48,15 @@ Numbering starts at 1 because that is what the model is asked to cite, and becau
 
 ### Task 1: The answer models
 
-- [ ] **Step 1: Failing tests** — `Source` requires `index: int` (≥1), `document_id`, `title`, and allows `url: str | None`, `section: str | None`, `chunk_id`, `score`; `RetrievalStats` carries `retrieved`, `used`, `dropped`; `Answer` requires a non-empty `answer`.
+- [x] **Step 1: Failing tests** — `Source` requires `index: int` (≥1), `document_id`, `title`, and allows `url: str | None`, `section: str | None`, `chunk_id`, `score`; `RetrievalStats` carries `retrieved`, `used`, `dropped`; `Answer` requires a non-empty `answer`.
 
-- [ ] **Step 2: Write `app/models/answers.py`.** `Source.index` is the citation number the answer text refers to, so it must match the context block exactly.
+- [x] **Step 2: Write `app/models/answers.py`.** `Source.index` is the citation number the answer text refers to, so it must match the context block exactly.
 
-- [ ] **Step 3: Green.** Commit: `feat(models): add the answer response model`.
+- [x] **Step 3: Green.** Commit: `feat(models): add the answer response model`.
 
 ### Task 2: Context building
 
-- [ ] **Step 1: Failing tests** — pure functions, so be thorough here; this is where silent corruption happens.
+- [x] **Step 1: Failing tests** — pure functions, so be thorough here; this is where silent corruption happens.
 
 1. Three chunks produce a block containing `[1]`, `[2]`, `[3]` in rank order.
 2. The header of each entry contains the chunk's `title` and, when present, its `section`.
@@ -67,7 +67,7 @@ Numbering starts at 1 because that is what the model is asked to cite, and becau
 7. An empty chunk list returns an empty block and an empty source list, and the caller is expected to handle it (tested in Task 4).
 8. Chunk text is never altered: a chunk containing `[1]` or a code fence appears byte-for-byte in the block.
 
-- [ ] **Step 2: Write `app/generation/context.py`**
+- [x] **Step 2: Write `app/generation/context.py`**
 
 ```python
 MAX_CONTEXT_CHARS = 12_000
@@ -77,11 +77,11 @@ def build_context(chunks: Sequence[ScoredChunk], *, max_chars: int = MAX_CONTEXT
 
 Returns `(context_block, sources, dropped_count)`.
 
-- [ ] **Step 3: Green.** Commit: `feat(generation): build a numbered context block`.
+- [x] **Step 3: Green.** Commit: `feat(generation): build a numbered context block`.
 
 ### Task 3: The LLM call
 
-- [ ] **Step 1: Write `app/generation/llm.py`**
+- [x] **Step 1: Write `app/generation/llm.py`**
 
 ```python
 SYSTEM_PROMPT = """..."""   # versioned with a comment
@@ -105,13 +105,13 @@ Answer in the language of the question.
 
 Retry on rate limits with the same backoff helper as step 05 — extract it to `app/core/retry.py` rather than writing it twice.
 
-- [ ] **Step 2: Manual check** — one real call, confirm text and usage come back. No automated test hits the network.
+- [x] **Step 2: Manual check** — one real call, confirm text and usage come back. No automated test hits the network.
 
-- [ ] **Step 3: Commit.** `feat(generation): add the LLM call`.
+- [x] **Step 3: Commit.** `feat(generation): add the LLM call`.
 
 ### Task 4: The orchestrator
 
-- [ ] **Step 1: Failing tests**, with a fake retriever and a fake LLM.
+- [x] **Step 1: Failing tests**, with a fake retriever and a fake LLM.
 
 1. `answer_question("q")` returns an `Answer` whose `sources` match the retrieved chunks and whose `retrieval.retrieved`/`used`/`dropped` are consistent.
 2. The user prompt passed to the LLM contains both the context block and the question.
@@ -120,7 +120,7 @@ Retry on rate limits with the same backoff helper as step 05 — extract it to `
 5. `model` on the `Answer` matches the configured model.
 6. An LLM exception propagates rather than being swallowed into a fake answer.
 
-- [ ] **Step 2: Write `app/generation/answer.py`**
+- [x] **Step 2: Write `app/generation/answer.py`**
 
 ```python
 def answer_question(
@@ -136,13 +136,13 @@ def answer_question(
 
 Twenty lines: validate, retrieve, short-circuit on empty, build context, call, assemble, time it with `time.perf_counter()`.
 
-- [ ] **Step 3: Green, `mypy app` clean.** Commit: `feat(generation): answer questions from retrieved context`.
+- [x] **Step 3: Green, `mypy app` clean.** Commit: `feat(generation): answer questions from retrieved context`.
 
 ### Task 5: The CLI and the first real answers
 
-- [ ] **Step 1: Write `scripts/ask.py`** — `uv run python scripts/ask.py "question" [--top-k 5] [--source fastapi] [--show-context]`. Print the answer, then the sources with titles and URLs, then the retrieval stats and latency. `--show-context` prints the exact prompt, which is the debugging tool you will use most.
+- [x] **Step 1: Write `scripts/ask.py`** — `uv run python scripts/ask.py "question" [--top-k 5] [--source fastapi] [--show-context]`. Print the answer, then the sources with titles and URLs, then the retrieval stats and latency. `--show-context` prints the exact prompt, which is the debugging tool you will use most.
 
-- [ ] **Step 2: Ask real questions and save the transcripts**
+- [x] **Step 2: Ask real questions and save the transcripts**
 
 ```powershell
 uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?"
@@ -153,12 +153,12 @@ uv run python scripts/ask.py "How do I limit memory for a Kubernetes pod?"
 
 The last one is deliberate: the corpus does not cover it. **The system must say it does not know.** If it answers confidently, the prompt is not doing its job and that is a step 09 problem you now know about before writing step 09.
 
-- [ ] **Step 3: Record** the French-question result, the refusal result, latency, and token counts. Commit: `feat: add the ask CLI`.
+- [x] **Step 3: Record** the French-question result, the refusal result, latency, and token counts. Commit: `feat: add the ask CLI`.
 
 ### Task 6: Documentation and the tag
 
-- [ ] **Step 1: Update `README.md`** — current state says Phase 1 complete, tick the Phase 1 roadmap box, add the `ask` command, and add a short transcript of one real question and answer with its sources. A README that shows the system working beats three paragraphs claiming it does.
-- [ ] **Step 2: Commit and tag.** `docs: document the minimal RAG pipeline`, then `git tag v0.2`.
+- [x] **Step 1: Update `README.md`** — current state says Phase 1 complete, tick the Phase 1 roadmap box, add the `ask` command, and add a short transcript of one real question and answer with its sources. A README that shows the system working beats three paragraphs claiming it does.
+- [x] **Step 2: Commit and tag.** `docs: document the minimal RAG pipeline`, then `git tag v0.2`.
 
 ## Verification
 
