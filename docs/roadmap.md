@@ -8,7 +8,7 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-03 are done. Step 04 (basic chunking) is next.**
+**Phase 0 and steps 02-04 are done. Step 05 (embeddings) is next.**
 
 Shipped and verified:
 
@@ -21,8 +21,9 @@ Shipped and verified:
 | Smoke test | `tests/test_environment.py` — imports only |
 | FastAPI corpus, fetched and loaded | `scripts/fetch_corpus.py`, `app/ingestion/loader.py` — 155 Markdown files |
 | Markdown cleaning | `app/ingestion/clean.py` — 155 in, 8 stubs dropped, 1 463 414 → 1 041 001 chars (71%), 0 code blocks lost |
+| Basic chunking | `app/ingestion/chunk.py` — 147 docs → 1 607 chunks, median 795 chars, 10 oversized (a whole code fence each), reconstruction tested |
 
-Nothing is chunked, embedded or indexed yet: no collection, no endpoint.
+Nothing is embedded or indexed yet: no collection, no endpoint.
 
 ## The three rules
 

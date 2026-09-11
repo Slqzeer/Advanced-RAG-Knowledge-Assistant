@@ -6,6 +6,7 @@
 
 - [Vue d'ensemble](#vue-densemble)
 - [État actuel](#état-actuel)
+- [Chunking](#chunking)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
 - [Démarrage rapide](#démarrage-rapide)
@@ -24,7 +25,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 1, étape 03 — nettoyage.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, puis nettoyé pour l'indexation. Aucun chunking, embedding ni endpoint n'est encore implémenté.
+**Phase 1, étape 04 — chunking de base.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, puis découpé en `Chunk` porteurs de leurs métadonnées. Aucun embedding ni endpoint n'est encore implémenté.
 
 Fonctionnalités disponibles :
 
@@ -34,9 +35,38 @@ Fonctionnalités disponibles :
 - instance Qdrant locale persistante avec Docker Compose ;
 - récupération du corpus FastAPI (155 fichiers Markdown) via `scripts/fetch_corpus.py` ;
 - chargement en `RawDocument` triés et reproductibles via `app.ingestion.loader` ;
-- nettoyage du Markdown MkDocs via `app.ingestion.clean` : 155 documents en entrée, 8 stubs écartés, 147 conservés, 1 463 414 → 1 041 001 caractères (71 %).
+- nettoyage du Markdown MkDocs via `app.ingestion.clean` : 155 documents en entrée, 8 stubs écartés, 147 conservés, 1 463 414 → 1 041 001 caractères (71 %) ;
+- découpage en chunks superposés via `app.ingestion.chunk` : 147 documents → 1 607 chunks.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
+
+## Chunking
+
+Découpage récursif par caractères, écrit à la main : on coupe sur le séparateur le plus sémantique qui tient (`
+## `, `
+### `, `
+
+`, `
+`, `. `, ` `), et on descend d'un cran pour les morceaux encore trop longs. Le séparateur vide final garantit la terminaison sur un bloc sans aucune coupure possible.
+
+Paramètres de référence — `chunk_size=1000`, `overlap=200`, en **caractères** et non en tokens (≈ 4 caractères par token en prose anglaise, moins en code). La phase 2 comparera d'autres stratégies contre exactement ces chiffres.
+
+| Mesure | Valeur |
+|---|---|
+| Documents en entrée | 147 |
+| Chunks produits | 1 607 |
+| Chunks par document (médiane / max) | 5 / 590 |
+| Taille médiane | 795 caractères |
+| Taille min / max | 74 / 2 331 |
+| Chunks hors limite | 10 (0,6 %) |
+| Chunks avec `section` renseignée | 1 404 (87 %) |
+
+**Aucun bloc de code n'est jamais coupé en deux.** Les spans que l'étape 03 reconnaît comme du code sont interdits de frontière ; un bloc plus long que `chunk_size` devient donc un chunk hors limite à lui seul, avec un avertissement journalisé. Les 10 cas mesurés sont tous un unique bloc clôturé (schéma OpenAPI, sortie `console`, diagramme d'exécution). C'est le plafond assumé de l'étape.
+
+**La reconstruction est testée.** Concaténer les chunks en retirant les recouvrements redonne le texte source à l'octet près : c'est le test qui attrape la pire régression possible, du contenu perdu en silence.
+
+Chaque `Chunk` porte `document_id`, `source`, `title`, `url`, `language`, `section`, `chunk_index`, `char_start` et `char_end`, plus un `chunk_id` dérivé (`{document_id}#{chunk_index}`). Les métadonnées sont attachées maintenant même si l'étape 13 seule les filtrera : les ajouter plus tard voudrait dire réindexer.
+
 
 ## Pipeline cible
 
@@ -142,7 +172,7 @@ docker compose down
 │   ├── core/         # future configuration partagée
 │   ├── evaluation/   # futures métriques RAG
 │   ├── generation/   # future génération de réponses
-│   ├── ingestion/    # chargement et nettoyage documentaires
+│   ├── ingestion/    # chargement, nettoyage et découpage documentaires
 │   ├── models/       # modèles de données
 │   └── retrieval/    # future recherche documentaire
 ├── data/
@@ -160,7 +190,7 @@ docker compose down
 ## Roadmap
 
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
-- [ ] **Phase 1 — RAG minimal** : ingestion et nettoyage (faits), chunking, embeddings, recherche vectorielle et réponse.
+- [ ] **Phase 1 — RAG minimal** : ingestion, nettoyage et chunking (faits), embeddings, recherche vectorielle et réponse.
 - [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
 - [ ] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG.

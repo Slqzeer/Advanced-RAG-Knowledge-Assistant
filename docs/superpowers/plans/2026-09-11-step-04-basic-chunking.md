@@ -41,19 +41,19 @@ Try to split on the first separator that yields pieces under `chunk_size`; recur
 
 ### Task 1: The chunk model
 
-- [ ] **Step 1: Failing test** — a `Chunk` with `char_end <= char_start` is rejected; `chunk_id` is derived, not passed in.
+- [x] **Step 1: Failing test** — a `Chunk` with `char_end <= char_start` is rejected; `chunk_id` is derived, not passed in.
 
-- [ ] **Step 2: Write `app/models/chunks.py`**
+- [x] **Step 2: Write `app/models/chunks.py`**
 
 Frozen pydantic model: `document_id`, `source`, `title`, `url: str | None`, `language`, `section: str | None`, `chunk_index: int`, `text: str` (`min_length=1`), `char_start: int`, `char_end: int`. A computed `chunk_id` property returning `f"{document_id}#{chunk_index}"`. A model validator rejecting `char_end <= char_start`.
 
 Add `to_payload()` returning the flat dict that step 06 stores in Qdrant. Keeping the payload shape next to the model means the indexer and the search result mapper cannot drift apart.
 
-- [ ] **Step 3: Green.** Commit: `feat(ingestion): add Chunk model`.
+- [x] **Step 3: Green.** Commit: `feat(ingestion): add Chunk model`.
 
 ### Task 2: The recursive splitter
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 1. Text shorter than `chunk_size` yields exactly one chunk equal to the input.
 2. No chunk exceeds `chunk_size`, **except** a chunk that is a single oversized code fence.
@@ -66,7 +66,7 @@ Add `to_payload()` returning the flat dict that step 06 stores in Qdrant. Keepin
 9. `section` on a chunk after `## Dependencies` is `"Dependencies"`; chunks before any heading have `section is None`.
 10. Degenerate inputs: empty string → `[]`; whitespace-only → `[]`; a single 5000-character word with no separators → chunks of exactly `chunk_size`, no infinite loop. Put a hard iteration guard in the splitter and test that it is never hit.
 
-- [ ] **Step 2: Write `app/ingestion/chunk.py`**
+- [x] **Step 2: Write `app/ingestion/chunk.py`**
 
 ```python
 CHUNK_SIZE = 1000
@@ -87,11 +87,11 @@ Implementation notes:
 - Track the current heading while walking, for `section`.
 - Leave a `ponytail:` comment on the oversized-fence branch naming the ceiling: *oversized code fences become single oversized chunks; revisit if the eval set shows them hurting recall.*
 
-- [ ] **Step 3: Green, `mypy app` clean.** Commit: `feat(ingestion): split documents into overlapping chunks`.
+- [x] **Step 3: Green, `mypy app` clean.** Commit: `feat(ingestion): split documents into overlapping chunks`.
 
 ### Task 3: Chunk the real corpus and look at the distribution
 
-- [ ] **Step 1: Measure**
+- [x] **Step 1: Measure**
 
 ```powershell
 uv run python -c "from pathlib import Path; from statistics import median; from app.ingestion.loader import load_documents; from app.ingestion.clean import clean_document; from app.ingestion.chunk import chunk_documents; docs=[d for d in (clean_document(x) for x in load_documents(Path('data/raw/fastapi'),'fastapi')) if d]; cs=chunk_documents(docs); sizes=sorted(len(c.text) for c in cs); print('docs',len(docs),'chunks',len(cs),'median',median(sizes),'max',sizes[-1],'oversized',sum(1 for s in sizes if s>1000))"
@@ -99,13 +99,13 @@ uv run python -c "from pathlib import Path; from statistics import median; from 
 
 Record: document count, chunk count, chunks per document, median and max chunk size, oversized-chunk count.
 
-- [ ] **Step 2: Sanity-read ten chunks** — the longest, the shortest, three random ones, and every oversized one. Each should be readable on its own. A chunk that is pure navigation links or a lone heading is a cleaning bug, not a chunking bug: fix it in step 03's module and add the test there.
+- [x] **Step 2: Sanity-read ten chunks** — the longest, the shortest, three random ones, and every oversized one. Each should be readable on its own. A chunk that is pure navigation links or a lone heading is a cleaning bug, not a chunking bug: fix it in step 03's module and add the test there.
 
-- [ ] **Step 3: Commit the measurements** in the message.
+- [x] **Step 3: Commit the measurements** in the message.
 
 ### Task 4: Documentation
 
-- [ ] Update `README.md`: current state, Phase 1 roadmap, and a short "Chunking" note giving the baseline parameters and the measured distribution. Phase 2 will compare against exactly these numbers, so they need to be written down somewhere permanent. Commit: `docs: record the chunking baseline`.
+- [x] Update `README.md`: current state, Phase 1 roadmap, and a short "Chunking" note giving the baseline parameters and the measured distribution. Phase 2 will compare against exactly these numbers, so they need to be written down somewhere permanent. Commit: `docs: record the chunking baseline`.
 
 ## Verification
 
