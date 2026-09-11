@@ -38,5 +38,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "-ra"
+markers = ["requires_qdrant: needs a running Qdrant (docker compose up -d qdrant)"]
 pythonpath = ["."]
 testpaths = ["tests"]
