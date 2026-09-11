@@ -8,7 +8,7 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-06 are done. Step 07 (similarity search) is next.**
+**Phase 0 and steps 02-07 are done. Step 08 (basic RAG) is next.**
 
 Shipped and verified:
 
@@ -25,8 +25,9 @@ Shipped and verified:
 | Embeddings, cached | `app/ingestion/embed.py` — 1 607 chunks → 1 536 dims via `text-embedding-3-small`, 404 s cold / 0.12 s warm, 13.3 MB sqlite cache, $0.006 |
 | Shared settings | `app/core/config.py` — one `Settings`, `.env` loaded once through an `lru_cache`d accessor |
 | Qdrant indexing | `app/retrieval/store.py`, `scripts/index_corpus.py` — 1 607 points, cosine, payload indexes on `source`/`document_id`/`language`, 4.4 s end to end; a re-run leaves 1 607 points in 3.5 s |
+| Similarity search | `app/retrieval/search.py`, `scripts/search.py` — ranked `ScoredChunk`s, 119 ms warm / 0.9-1.8 s cold, 15 tests; `HTTPException 422` recorded as the hybrid-search target (1 chunk in the top 50 contains the token, at rank 5) |
 
-The corpus is indexed but nothing queries it yet: no search, no endpoint.
+The corpus is indexed and queryable. Nothing generates an answer yet: no LLM, no endpoint.
 
 ## The three rules
 

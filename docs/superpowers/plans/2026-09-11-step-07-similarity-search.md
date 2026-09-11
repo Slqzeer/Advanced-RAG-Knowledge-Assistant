@@ -1,6 +1,6 @@
 # Step 07 — Similarity Search
 
-> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Steps use `- [ ]` for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Steps use `- [x]` for tracking.
 
 **Goal:** Ask a question in natural language and get back the `top_k` chunks that should answer it, with scores. Retrieval only — no LLM in this step.
 
@@ -38,15 +38,15 @@ Hybrid search, RRF, reranking and multi-query all eventually live behind this ca
 
 ### Task 1: `ScoredChunk`
 
-- [ ] **Step 1: Failing test** — `ScoredChunk` exposes `chunk`, `score: float`, `rank: int` (≥1), and `rerank_score: float | None = None`; `rank=0` is rejected.
+- [x] **Step 1: Failing test** — `ScoredChunk` exposes `chunk`, `score: float`, `rank: int` (≥1), and `rerank_score: float | None = None`; `rank=0` is rejected.
 
-- [ ] **Step 2: Implement** in `app/models/chunks.py`, next to `Chunk`.
+- [x] **Step 2: Implement** in `app/models/chunks.py`, next to `Chunk`.
 
-- [ ] **Step 3: Green.** Commit: `feat(models): add ScoredChunk`.
+- [x] **Step 3: Green.** Commit: `feat(models): add ScoredChunk`.
 
 ### Task 2: The search function
 
-- [ ] **Step 1: Failing unit tests**, with a fake Qdrant client and a fake embedder.
+- [x] **Step 1: Failing unit tests**, with a fake Qdrant client and a fake embedder.
 
 1. `search("x", top_k=3)` returns 3 `ScoredChunk`s with `rank` 1, 2, 3 in that order.
 2. Scores are passed through unchanged, in descending order.
@@ -57,7 +57,7 @@ Hybrid search, RRF, reranking and multi-query all eventually live behind this ca
 7. An empty or whitespace-only query raises `ValueError` before any embedding call is made. Embedding the empty string returns a valid vector that retrieves plausible-looking garbage; failing fast is the only honest behaviour.
 8. `top_k=0` raises.
 
-- [ ] **Step 2: Write `app/retrieval/search.py`**
+- [x] **Step 2: Write `app/retrieval/search.py`**
 
 ```python
 def chunk_from_payload(payload: Mapping[str, Any]) -> Chunk: ...
@@ -79,15 +79,15 @@ Flow: validate the query → `embed_query` → `client.query_points(collection_n
 
 Check the installed client's search API against its own docs; `query_points` is the current universal entry point and the older `search` method is deprecated.
 
-- [ ] **Step 3: Integration test** under the `requires_qdrant` marker: index three chunks with deliberately distinct content (one about dependency injection, one about Docker memory limits, one about Markdown formatting) into a throwaway collection, query `"how does dependency injection work"`, and assert the first chunk ranks 1. If it does not, something upstream is broken and no later measurement means anything.
+- [x] **Step 3: Integration test** under the `requires_qdrant` marker: index three chunks with deliberately distinct content (one about dependency injection, one about Docker memory limits, one about Markdown formatting) into a throwaway collection, query `"how does dependency injection work"`, and assert the first chunk ranks 1. If it does not, something upstream is broken and no later measurement means anything.
 
-- [ ] **Step 4: Green.** Commit: `feat(retrieval): add dense similarity search`.
+- [x] **Step 4: Green.** Commit: `feat(retrieval): add dense similarity search`.
 
 ### Task 3: Look at real results
 
-- [ ] **Step 1: Write `scripts/search.py`** — `uv run python scripts/search.py "question" --top-k 5 [--source fastapi]`. Print rank, score, `document_id`, `section`, and the first 200 characters of each chunk.
+- [x] **Step 1: Write `scripts/search.py`** — `uv run python scripts/search.py "question" --top-k 5 [--source fastapi]`. Print rank, score, `document_id`, `section`, and the first 200 characters of each chunk.
 
-- [ ] **Step 2: Run the queries that matter**
+- [x] **Step 2: Run the queries that matter**
 
 ```powershell
 uv run python scripts/search.py "Comment fonctionne l'injection de dependances dans FastAPI ?"
@@ -97,18 +97,18 @@ uv run python scripts/search.py "Depends"
 uv run python scripts/search.py "how to protect an API"
 ```
 
-- [ ] **Step 3: Write down what you observe.** Specifically:
+- [x] **Step 3: Write down what you observe.** Specifically:
   - Does the French question retrieve the English documents? (Cross-lingual behaviour of the embedding model, measured rather than assumed.)
   - Does `HTTPException 422` retrieve the right page? **It probably does not, and that failure is the entire justification for steps 14-16.** Record it now, verbatim, so the hybrid-search step has a real before-and-after instead of a claim from a blog post.
   - Are the top results from the same document? That is a chunking/diversity observation for step 12.
 
 Put these observations in the commit message and in the README. They are the project's first findings.
 
-- [ ] **Step 4: Commit.** `feat(retrieval): add a search CLI`.
+- [x] **Step 4: Commit.** `feat(retrieval): add a search CLI`.
 
 ### Task 4: Documentation
 
-- [ ] Update `README.md`: current state, roadmap, the search command, and a short "Premiers constats" section with the observations above. Commit: `docs: record the first retrieval observations`.
+- [x] Update `README.md`: current state, roadmap, the search command, and a short "Premiers constats" section with the observations above. Commit: `docs: record the first retrieval observations`.
 
 ## Verification
 

@@ -9,6 +9,8 @@
 - [Chunking](#chunking)
 - [Embeddings](#embeddings)
 - [Indexation Qdrant](#indexation-qdrant)
+- [Recherche vectorielle](#recherche-vectorielle)
+- [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
 - [Démarrage rapide](#démarrage-rapide)
@@ -27,7 +29,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 1, étape 06 — indexation Qdrant.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, puis indexé dans Qdrant par un script unique de bout en bout. Aucune recherche ni endpoint n'est encore implémenté.
+**Phase 1, étape 07 — recherche par similarité.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, et enfin **interrogeable** : une question en langue naturelle ressort les `top_k` chunks classés, avec leurs scores. Aucun LLM ni endpoint n'est encore implémenté — la réponse générée est l'étape 08.
 
 Fonctionnalités disponibles :
 
@@ -41,7 +43,8 @@ Fonctionnalités disponibles :
 - découpage en chunks superposés via `app.ingestion.chunk` : 147 documents → 1 607 chunks ;
 - vectorisation via `app.ingestion.embed` : 1 607 chunks → 1 536 dimensions, cache sqlite persistant de 13,3 Mo, 404 s à froid puis 0,12 s à chaud ;
 - configuration partagée via `app.core.config` : une classe `Settings` lue une seule fois, qui charge `.env` ;
-- indexation dans Qdrant via `app.retrieval.store` et `scripts/index_corpus.py` : 1 607 points, distance cosinus, index de payload sur `source`, `document_id` et `language`.
+- indexation dans Qdrant via `app.retrieval.store` et `scripts/index_corpus.py` : 1 607 points, distance cosinus, index de payload sur `source`, `document_id` et `language` ;
+- recherche par similarité via `app.retrieval.search` et `scripts/search.py` : `search()` rend des `ScoredChunk` classés à partir du rang 1, 119 ms sur requête déjà vectorisée.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
@@ -127,6 +130,57 @@ uv run python scripts/index_corpus.py --recreate             # passage complet
 
 Les tests d'intégration portent le marqueur `requires_qdrant` et s'ignorent d'eux-mêmes quand le serveur n'est pas joignable : `uv run pytest` reste vert sur une machine sans Docker.
 
+## Recherche vectorielle
+
+Une fonction, `search()`, et c'est volontairement tout :
+
+```python
+search(query: str, *, top_k: int = 5, source: str | None = None) -> list[ScoredChunk]
+```
+
+```powershell
+uv run python scripts/search.py "How does dependency injection work in FastAPI?"
+uv run python scripts/search.py "HTTPException 422" --top-k 10 --source fastapi
+```
+
+**Cette signature est conçue une fois, maintenant, pour tout ce qui suit.** La recherche hybride (étapes 14-16), le reranking (17) et la réécriture de requête (18) vivent tous derrière cet appel. Fixer le type de retour dès maintenant — un chunk, plus un score, plus un rang — transforme huit étapes ultérieures en changements internes plutôt qu'en remaniements de tout le dépôt.
+
+**`ScoredChunk` enveloppe `Chunk`, il n'en hérite pas.** Un score n'est pas une propriété d'un chunk, mais d'un chunk *vis-à-vis d'une requête*. Et le reranker de l'étape 17 produira un *second* score pour le même chunk : `rerank_score` en champ voisin est évident, là où un `score` écrasé est un piège de débogage.
+
+**Le rang est stocké, il part de 1.** Toutes les métriques de l'étape 11 — MRR, NDCG, Recall@K — sont des fonctions du rang. Le recalculer depuis la position dans la liste à quatre endroits, c'est ainsi qu'un décalage d'un rang finit dans un tableau de résultats publié.
+
+**Les scores sortent bruts, tels que le moteur les rapporte.** Ni normalisation, ni remise à l'échelle : une normalisation inventée est une couche qui ment. La fusion de l'étape 16 travaillera sur les rangs, pas sur les scores.
+
+**Aucun cache de recherche ici.** L'étape 23 l'ajoutera, délibérément, une fois qu'il y aura une latence à améliorer. Un cache de retrieval ajouté maintenant masquerait silencieusement les variations que les étapes 14-19 servent précisément à mesurer. Le cache d'embeddings de l'étape 05, lui, est réutilisé : une requête de benchmark rejouée ne coûte rien.
+
+**Une requête vide est rejetée avant tout appel réseau.** La chaîne vide se vectorise très bien et retrouve des résultats parfaitement plausibles, donc faux. Échouer tôt est le seul comportement honnête. Idem pour `top_k < 1`.
+
+**Une clé de payload optionnelle absente vaut `None`, pas une erreur.** Qdrant ne stocke pas les valeurs nulles : un chunk sans `url` revient sans la clé du tout. Une clé obligatoire manquante, elle, échoue en nommant le champ.
+
+Le client Qdrant et la fonction de vectorisation sont des paramètres injectables : les treize tests unitaires de l'étape tournent sans serveur et sans clé d'API. Les deux tests d'intégration portent le marqueur `requires_qdrant`.
+
+## Premiers constats
+
+Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
+
+| Requête | Rang 1 | Score | Documents distincts dans le top 5 |
+|---|---|---:|---:|
+| `Comment fonctionne l'injection de dependances dans FastAPI ?` | `tutorial/dependencies/index` | 0,6773 | 2 |
+| `How does dependency injection work in FastAPI?` | `tutorial/dependencies/index` | 0,7743 | 3 |
+| `HTTPException 422` | `tutorial/handling-errors` | 0,3658 | 3 |
+| `Depends` | `tutorial/dependencies/index` | 0,3643 | 3 |
+| `how to protect an API` | `how-to/conditional-openapi` | 0,6335 | 3 |
+
+**Le translinguistique fonctionne.** La question française et sa jumelle anglaise classent toutes deux `tutorial/dependencies/index` en tête et partagent 4 résultats sur 5. Le français score plus bas de bout en bout (0,677 contre 0,774 au rang 1) : l'écart est constant, pas rédhibitoire. Aucune traduction de requête n'est nécessaire pour l'instant.
+
+**`HTTPException 422` est l'échec qui justifie les étapes 14-16.** La recherche dense retrouve la bonne famille de pages — `tutorial/handling-errors` aux rangs 1, 2 et 4 — mais le token littéral `422` n'y contribue en rien : un seul chunk de tout le top 50 contient la chaîne, il arrive au rang 5 à 0,3214, et c'est un exemple JSON OpenAPI dans `advanced/additional-responses` qui liste incidemment une réponse 422. Seuls 2 des 155 documents du corpus contiennent `422`. La cible de la recherche hybride est donc précise : faire remonter ces deux-là, au-dessus de la prose générique sur la gestion d'erreurs.
+
+**Les scores ne vivent pas sur une seule échelle.** Les questions en langue naturelle se situent entre 0,61 et 0,77, les requêtes mots-clés (`Depends`, `HTTPException 422`) entre 0,28 et 0,37 — sur des résultats pourtant parfaitement pertinents. Un seuil de score fixe rejetterait le second groupe en bloc. La règle de refus de l'étape 22 aura besoin d'autre chose qu'un plancher.
+
+**Le top 5 se concentre sur 2 à 3 documents**, 3 résultats sur 5 venant d'un seul document sur les deux questions d'injection de dépendances. C'est un constat de diversité pour l'étape 12, pas un défaut à corriger à l'aveugle.
+
+**Latence : 0,9 à 1,8 s à froid, 119 ms une fois le vecteur de requête en cache.** Qdrant n'est pas le coût ; l'aller-retour de vectorisation l'est.
+
 ## Pipeline cible
 
 ```mermaid
@@ -155,7 +209,7 @@ Ce diagramme représente la cible du projet, pas son état actuel.
 | Langage | Python 3.12+ | Configuré |
 | Gestion de projet | uv | Configuré |
 | API | FastAPI | Dépendance installée |
-| Base vectorielle | Qdrant | Corpus indexé, 1 607 points |
+| Base vectorielle | Qdrant | Corpus indexé et interrogeable, 1 607 points |
 | Embeddings | OpenAI `text-embedding-3-small` | Implémenté avec cache sqlite |
 | Validation | Pydantic | Utilisé pour les modèles et la configuration |
 | Tests | pytest | Configuré |
@@ -223,6 +277,10 @@ uv run python scripts/fetch_corpus.py
 uv run python scripts/index_corpus.py --limit 20 --dry-run
 uv run python scripts/index_corpus.py --recreate
 
+# Interroger l'index
+uv run python scripts/search.py "How does dependency injection work in FastAPI?"
+uv run python scripts/search.py "HTTPException 422" --top-k 10 --source fastapi
+
 # Tests d'intégration Qdrant (ignorés si le serveur n'est pas joignable)
 uv run pytest -m requires_qdrant
 
@@ -243,14 +301,14 @@ docker compose down
 │   ├── generation/   # future génération de réponses
 │   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
-│   └── retrieval/    # indexation Qdrant, future recherche documentaire
+│   └── retrieval/    # indexation Qdrant et recherche par similarité
 ├── data/
 │   ├── raw/          # sources locales non versionnées
 │   └── processed/    # données transformées non versionnées
 ├── docker/           # futurs fichiers de conteneurisation
 ├── docs/             # spécifications et plans
 ├── notebooks/        # futures expérimentations
-├── scripts/          # outils ponctuels (récupération du corpus, indexation)
+├── scripts/          # outils ponctuels (corpus, indexation, recherche)
 ├── tests/            # tests automatisés
 ├── compose.yaml      # service Qdrant local
 └── pyproject.toml    # projet et outils Python
@@ -259,7 +317,7 @@ docker compose down
 ## Roadmap
 
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
-- [ ] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking, embeddings et indexation Qdrant (faits), recherche vectorielle et réponse.
+- [ ] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking, embeddings, indexation Qdrant et recherche vectorielle (faits), génération de la réponse.
 - [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
 - [ ] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG.
@@ -283,10 +341,12 @@ Les résultats seront ajoutés avec les phases correspondantes. Une valeur absen
 
 | Version | Recall@5 | Recall@10 | MRR | Latence | Coût |
 |---|---:|---:|---:|---:|---:|
-| Recherche vectorielle naïve | — | — | — | — | — |
+| Recherche vectorielle naïve | — | — | — | 119 ms* | — |
 | Chunking amélioré | — | — | — | — | — |
 | Recherche hybride | — | — | — | — | — |
 | Reranking | — | — | — | — | — |
+
+\* Latence de recherche seule, vecteur de requête déjà en cache ; 0,9 à 1,8 s quand il faut le calculer. Les métriques de qualité arrivent avec l'étape 11, qui construit le jeu d'évaluation.
 
 ## Qualité et CI
 
