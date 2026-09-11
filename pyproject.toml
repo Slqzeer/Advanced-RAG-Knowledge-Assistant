@@ -5,6 +5,7 @@ description = "Assistant documentaire technique fondé sur une architecture RAG 
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.116,<1",
+    "openai>=2,<3",
     "pydantic-settings>=2.10,<3",
     "qdrant-client>=1.15,<2",
     "uvicorn[standard]>=0.35,<1",
