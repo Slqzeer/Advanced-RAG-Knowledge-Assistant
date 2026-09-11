@@ -34,7 +34,7 @@ Cache key is `sha256(model + "\x00" + text)`. The model goes in the key because 
 
 ### Task 1: Add the dependency
 
-- [ ] **Step 1**
+- [x] **Step 1**
 
 ```powershell
 uv add "openai>=1.109,<2"
@@ -42,11 +42,11 @@ uv lock --check
 uv run python -c "import openai; print(openai.__version__)"
 ```
 
-- [ ] **Step 2: Commit.** `chore: add the openai client`.
+- [x] **Step 2: Commit.** `chore: add the openai client`.
 
 ### Task 2: The cache
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 1. A fresh cache returns `None` for an unknown key.
 2. After `put`, `get` returns the identical vector (floats, same length, same order).
@@ -55,7 +55,7 @@ uv run python -c "import openai; print(openai.__version__)"
 5. The cache file is created with its parent directories.
 6. Reopening the cache on the same path returns previously stored vectors.
 
-- [ ] **Step 2: Write `EmbeddingCache` in `app/ingestion/embed.py`**
+- [x] **Step 2: Write `EmbeddingCache` in `app/ingestion/embed.py`**
 
 One table: `CREATE TABLE IF NOT EXISTS embeddings (key TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vector BLOB NOT NULL)`.
 
@@ -63,11 +63,11 @@ Store the vector as a `struct.pack(f"<{len(v)}f", *v)` blob, not JSON. A 1536-fl
 
 Methods: `get(key)`, `get_many(keys)`, `put_many(items)`. Batch the writes in one transaction. Open with `check_same_thread=False` and set `PRAGMA journal_mode=WAL`.
 
-- [ ] **Step 3: Green.** Commit: `feat(ingestion): add a persistent embedding cache`.
+- [x] **Step 3: Green.** Commit: `feat(ingestion): add a persistent embedding cache`.
 
 ### Task 3: The embedding functions
 
-- [ ] **Step 1: Write the failing tests**, all against a fake client — no network in the test suite, ever.
+- [x] **Step 1: Write the failing tests**, all against a fake client — no network in the test suite, ever.
 
 1. `embed_texts` on 3 texts calls the client once and returns 3 vectors in input order.
 2. **Order is preserved with a partial cache hit:** 5 texts where 2 are cached returns 5 vectors in the original order, and the client was asked for only the 3 missing ones. This is the bug worth testing: an off-by-one in the merge silently attaches the wrong vector to the wrong chunk, and nothing downstream notices except a mysteriously bad Recall@5.
@@ -78,7 +78,7 @@ Methods: `get(key)`, `get_many(keys)`, `put_many(items)`. Batch the writes in on
 7. A client raising a rate-limit error twice then succeeding returns vectors; a client always failing raises after the attempt cap. Patch the sleep so the test is fast.
 8. A response whose vector length differs from the expected dimension raises — do not let a wrong-dimension vector reach Qdrant.
 
-- [ ] **Step 2: Write the functions**
+- [x] **Step 2: Write the functions**
 
 ```python
 def embed_texts(
@@ -97,11 +97,11 @@ Flow: hash every text → `cache.get_many` → collect the unique misses preserv
 
 `client` and `cache` are injectable parameters defaulting to `None`, built lazily when absent. That is the entire dependency-injection story here: two default arguments, no container, no factory.
 
-- [ ] **Step 3: Green, `mypy app` clean.** Commit: `feat(ingestion): embed texts with caching and retries`.
+- [x] **Step 3: Green, `mypy app` clean.** Commit: `feat(ingestion): embed texts with caching and retries`.
 
 ### Task 4: Embed the real corpus
 
-- [ ] **Step 1: Cost check before spending anything**
+- [x] **Step 1: Cost check before spending anything**
 
 ```powershell
 uv run python -c "from pathlib import Path; from app.ingestion.loader import load_documents; from app.ingestion.clean import clean_document; from app.ingestion.chunk import chunk_documents; docs=[d for d in (clean_document(x) for x in load_documents(Path('data/raw/fastapi'),'fastapi')) if d]; cs=chunk_documents(docs); chars=sum(len(c.text) for c in cs); print('chunks',len(cs),'chars',chars,'approx tokens',chars//4)"
@@ -109,17 +109,17 @@ uv run python -c "from pathlib import Path; from app.ingestion.loader import loa
 
 Multiply the approximate token count by the model's published price. If the number surprises you, stop and reconsider the corpus size before spending.
 
-- [ ] **Step 2: Embed, twice**
+- [x] **Step 2: Embed, twice**
 
 Run the embedding over all chunks, timing it. Then run it again. The second run must take under a second and make zero requests. Record both timings and the cache file size.
 
-- [ ] **Step 3: Verify one vector by hand** — embed `"dependency injection"` and `"Depends"` and `"kubernetes memory limits"`, and check that cosine similarity of the first two exceeds the first and third. If it does not, the vectors are wrong and every later measurement is meaningless.
+- [x] **Step 3: Verify one vector by hand** — embed `"dependency injection"` and `"Depends"` and `"kubernetes memory limits"`, and check that cosine similarity of the first two exceeds the first and third. If it does not, the vectors are wrong and every later measurement is meaningless.
 
-- [ ] **Step 4: Commit the timings** in the message.
+- [x] **Step 4: Commit the timings** in the message.
 
 ### Task 5: Documentation
 
-- [ ] Update `.env.example` (`EMBEDDING_MODEL`, `EMBEDDING_CACHE_PATH=data/processed/embeddings.sqlite`), confirm the cache path is gitignored, and update `README.md` with the model, dimension, cold/warm timings and cost. Commit: `docs: document the embedding stage`.
+- [x] Update `.env.example` (`EMBEDDING_MODEL`, `EMBEDDING_CACHE_PATH=data/processed/embeddings.sqlite`), confirm the cache path is gitignored, and update `README.md` with the model, dimension, cold/warm timings and cost. Commit: `docs: document the embedding stage`.
 
 ## Verification
 
@@ -146,3 +146,17 @@ The test suite must pass with no network access and no API key set. Verify that 
 | Async / concurrent batches | embedding time is the bottleneck you are trying to fix |
 | Matryoshka dimension truncation | index size or recall trade-offs matter |
 | Cache eviction | the sqlite file gets uncomfortably large |
+
+## As built — where the implementation left the plan
+
+| Plan said | Shipped | Why |
+|---|---|---|
+| `openai>=1.109,<2` | `openai==2.54.0` | 2.x is current; the 1.x cap was stale when the plan was written. |
+| Hand-rolled 429/5xx backoff, capped at 5 attempts | `OpenAI(max_retries=5)` | The SDK already retries exactly those, with exponential backoff. Test 7 became an assertion that the client is configured for it, instead of a patched sleep. |
+| `dim INTEGER NOT NULL` column | dropped | `len(blob) // 4` is the dimension. A stored column that can disagree with the blob is a column that will. |
+| Raise on a vector differing from *the expected* dimension | Raise when the vectors in one run are not all the same length | The model is in the cache key, so runs cannot mix embedding spaces; there is no separate expected number to hardcode, and the fake client in tests need not emit 1 536 floats. |
+| Cosine probe: `dependency injection` / `Depends` vs `kubernetes memory limits` | kept, plus stronger controls | The plan's probe passes by 0,222 vs 0,198 — bare `Depends` reads as the English verb out of context. `cat`/`dog` 0,603 vs `cat`/`quantum chromodynamics` 0,172 is the check that would actually catch broken vectors. |
+
+`.env` is not loaded by anything yet: provider commands run under `uv run --env-file .env`. The shared settings module is step 06's, per `docs/roadmap.md`.
+
+**Measured:** 1 607 chunks, 304 458 approximate tokens, 1 536 dimensions, 404 s cold, 0,12 s warm, 13,3 MB cache, ≈ $0.006.

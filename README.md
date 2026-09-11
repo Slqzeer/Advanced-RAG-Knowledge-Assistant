@@ -7,6 +7,7 @@
 - [Vue d'ensemble](#vue-densemble)
 - [État actuel](#état-actuel)
 - [Chunking](#chunking)
+- [Embeddings](#embeddings)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
 - [Démarrage rapide](#démarrage-rapide)
@@ -25,7 +26,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 1, étape 04 — chunking de base.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, puis découpé en `Chunk` porteurs de leurs métadonnées. Aucun embedding ni endpoint n'est encore implémenté.
+**Phase 1, étape 05 — embeddings.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, puis vectorisé avec cache persistant. Aucune indexation Qdrant ni endpoint n'est encore implémenté.
 
 Fonctionnalités disponibles :
 
@@ -36,7 +37,8 @@ Fonctionnalités disponibles :
 - récupération du corpus FastAPI (155 fichiers Markdown) via `scripts/fetch_corpus.py` ;
 - chargement en `RawDocument` triés et reproductibles via `app.ingestion.loader` ;
 - nettoyage du Markdown MkDocs via `app.ingestion.clean` : 155 documents en entrée, 8 stubs écartés, 147 conservés, 1 463 414 → 1 041 001 caractères (71 %) ;
-- découpage en chunks superposés via `app.ingestion.chunk` : 147 documents → 1 607 chunks.
+- découpage en chunks superposés via `app.ingestion.chunk` : 147 documents → 1 607 chunks ;
+- vectorisation via `app.ingestion.embed` : 1 607 chunks → 1 536 dimensions, cache sqlite persistant de 13,3 Mo, 404 s à froid puis 0,12 s à chaud.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
@@ -67,6 +69,29 @@ Paramètres de référence — `chunk_size=1000`, `overlap=200`, en **caractère
 
 Chaque `Chunk` porte `document_id`, `source`, `title`, `url`, `language`, `section`, `chunk_index`, `char_start` et `char_end`, plus un `chunk_id` dérivé (`{document_id}#{chunk_index}`). Les métadonnées sont attachées maintenant même si l'étape 13 seule les filtrera : les ajouter plus tard voudrait dire réindexer.
 
+## Embeddings
+
+`text-embedding-3-small` d'OpenAI, 1 536 dimensions, appelé par lots de 100 textes. Les nouvelles tentatives sur 429 et 5xx sont celles du client SDK (`max_retries=5`), pas une boucle écrite à la main.
+
+**Le cache est la raison d'être de cette étape.** Les étapes 10 et suivantes relancent le pipeline en boucle en modifiant le retrieval, jamais les embeddings : sans cache, chaque passage repaie et réattend exactement les mêmes vecteurs. Un fichier sqlite unique, en bibliothèque standard, qui survit aux redémarrages.
+
+| Mesure | Valeur |
+|---|---|
+| Chunks vectorisés | 1 607 |
+| Tokens approximatifs | 304 458 |
+| Dimensions | 1 536 |
+| Passage à froid | 404 s |
+| Passage à chaud | 0,12 s, zéro requête |
+| Taille du cache | 13,3 Mo |
+| Coût réel | ≈ 0,006 $ |
+
+La clé de cache est `sha256(modèle + "\0" + texte)`. Le modèle en fait partie pour qu'un changement de modèle provoque un défaut de cache, au lieu de servir en silence des vecteurs issus d'un autre espace vectoriel dans le même index.
+
+**Les vecteurs sortent dans l'ordre d'entrée, y compris en cache partiel.** La sortie est assemblée par recherche de clé, et non en zippant la réponse du fournisseur sur la liste d'entrée : dès qu'une partie des textes est en cache, les deux listes n'ont plus la même longueur, et un décalage d'un rang attacherait le mauvais vecteur au mauvais chunk sans que rien ne le signale — sauf un Recall@5 inexplicablement mauvais. C'est le test central de l'étape.
+
+Contrôle de bon sens sur les vecteurs produits : cos(`cat`, `dog`) = 0,603 contre cos(`cat`, `quantum chromodynamics`) = 0,172 ; cos(`dependency injection`, `FastAPI dependency injection with Depends`) = 0,537 contre cos(`dependency injection`, `kubernetes memory limits`) = 0,198.
+
+Les tests n'accèdent jamais au réseau et passent sans clé d'API : le client et le cache sont des paramètres injectables.
 
 ## Pipeline cible
 
@@ -97,6 +122,7 @@ Ce diagramme représente la cible du projet, pas son état actuel.
 | Gestion de projet | uv | Configuré |
 | API | FastAPI | Dépendance installée |
 | Base vectorielle | Qdrant | Configuré en local |
+| Embeddings | OpenAI `text-embedding-3-small` | Implémenté avec cache sqlite |
 | Validation | Pydantic | Dépendance installée |
 | Tests | pytest | Configuré |
 | Qualité | Ruff, mypy, pre-commit | Configuré |
@@ -123,6 +149,8 @@ Copy-Item .env.example .env
 uv sync --frozen
 docker compose up -d qdrant --wait
 ```
+
+Renseignez ensuite `OPENAI_API_KEY` dans `.env` : les embeddings de l'étape 05 en ont besoin. Rien ne charge `.env` automatiquement pour l'instant — les commandes qui appellent un fournisseur passent par `uv run --env-file .env`. Le module de configuration partagé arrive à l'étape 06, quand Qdrant aura le même besoin.
 
 Qdrant est alors accessible sur :
 
@@ -157,6 +185,9 @@ uv run pre-commit run --all-files
 # Récupérer le corpus (écrit dans data/raw/, non versionné)
 uv run python scripts/fetch_corpus.py
 
+# Vectoriser le corpus (premier passage payant, les suivants sortent du cache)
+uv run --env-file .env python -c "from pathlib import Path; from app.ingestion.loader import load_documents; from app.ingestion.clean import clean_document; from app.ingestion.chunk import chunk_documents; from app.ingestion.embed import embed_texts; docs=[d for d in (clean_document(x) for x in load_documents(Path('data/raw/fastapi'),'fastapi')) if d]; v=embed_texts([c.text for c in chunk_documents(docs)]); print(len(v),'vecteurs de',len(v[0]),'dimensions')"
+
 # Gérer Qdrant
 docker compose up -d qdrant --wait
 docker compose ps
@@ -172,7 +203,7 @@ docker compose down
 │   ├── core/         # future configuration partagée
 │   ├── evaluation/   # futures métriques RAG
 │   ├── generation/   # future génération de réponses
-│   ├── ingestion/    # chargement, nettoyage et découpage documentaires
+│   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
 │   └── retrieval/    # future recherche documentaire
 ├── data/
@@ -190,7 +221,7 @@ docker compose down
 ## Roadmap
 
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
-- [ ] **Phase 1 — RAG minimal** : ingestion, nettoyage et chunking (faits), embeddings, recherche vectorielle et réponse.
+- [ ] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking et embeddings (faits), recherche vectorielle et réponse.
 - [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
 - [ ] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG.
