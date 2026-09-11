@@ -8,7 +8,7 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-05 are done. Step 06 (Qdrant indexing) is next.**
+**Phase 0 and steps 02-06 are done. Step 07 (similarity search) is next.**
 
 Shipped and verified:
 
@@ -23,8 +23,10 @@ Shipped and verified:
 | Markdown cleaning | `app/ingestion/clean.py` — 155 in, 8 stubs dropped, 1 463 414 → 1 041 001 chars (71%), 0 code blocks lost |
 | Basic chunking | `app/ingestion/chunk.py` — 147 docs → 1 607 chunks, median 795 chars, 10 oversized (a whole code fence each), reconstruction tested |
 | Embeddings, cached | `app/ingestion/embed.py` — 1 607 chunks → 1 536 dims via `text-embedding-3-small`, 404 s cold / 0.12 s warm, 13.3 MB sqlite cache, $0.006 |
+| Shared settings | `app/core/config.py` — one `Settings`, `.env` loaded once through an `lru_cache`d accessor |
+| Qdrant indexing | `app/retrieval/store.py`, `scripts/index_corpus.py` — 1 607 points, cosine, payload indexes on `source`/`document_id`/`language`, 4.4 s end to end; a re-run leaves 1 607 points in 3.5 s |
 
-Nothing is indexed yet: no collection, no endpoint. Vectors exist only in the local cache.
+The corpus is indexed but nothing queries it yet: no search, no endpoint.
 
 ## The three rules
 

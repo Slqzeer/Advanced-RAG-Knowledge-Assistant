@@ -8,6 +8,7 @@
 - [État actuel](#état-actuel)
 - [Chunking](#chunking)
 - [Embeddings](#embeddings)
+- [Indexation Qdrant](#indexation-qdrant)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
 - [Démarrage rapide](#démarrage-rapide)
@@ -26,7 +27,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 1, étape 05 — embeddings.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, puis vectorisé avec cache persistant. Aucune indexation Qdrant ni endpoint n'est encore implémenté.
+**Phase 1, étape 06 — indexation Qdrant.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, puis indexé dans Qdrant par un script unique de bout en bout. Aucune recherche ni endpoint n'est encore implémenté.
 
 Fonctionnalités disponibles :
 
@@ -38,7 +39,9 @@ Fonctionnalités disponibles :
 - chargement en `RawDocument` triés et reproductibles via `app.ingestion.loader` ;
 - nettoyage du Markdown MkDocs via `app.ingestion.clean` : 155 documents en entrée, 8 stubs écartés, 147 conservés, 1 463 414 → 1 041 001 caractères (71 %) ;
 - découpage en chunks superposés via `app.ingestion.chunk` : 147 documents → 1 607 chunks ;
-- vectorisation via `app.ingestion.embed` : 1 607 chunks → 1 536 dimensions, cache sqlite persistant de 13,3 Mo, 404 s à froid puis 0,12 s à chaud.
+- vectorisation via `app.ingestion.embed` : 1 607 chunks → 1 536 dimensions, cache sqlite persistant de 13,3 Mo, 404 s à froid puis 0,12 s à chaud ;
+- configuration partagée via `app.core.config` : une classe `Settings` lue une seule fois, qui charge `.env` ;
+- indexation dans Qdrant via `app.retrieval.store` et `scripts/index_corpus.py` : 1 607 points, distance cosinus, index de payload sur `source`, `document_id` et `language`.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
@@ -93,6 +96,37 @@ Contrôle de bon sens sur les vecteurs produits : cos(`cat`, `dog`) = 0,603 cont
 
 Les tests n'accèdent jamais au réseau et passent sans clé d'API : le client et le cache sont des paramètres injectables.
 
+## Indexation Qdrant
+
+Un seul script enchaîne les quatre étapes précédentes et écrit dans Qdrant : `raw → clean → chunk → embed → upsert`. C'est le premier artefact exécutable du projet.
+
+```powershell
+docker compose up -d qdrant --wait
+uv run python scripts/index_corpus.py --limit 20 --dry-run   # répétition à blanc
+uv run python scripts/index_corpus.py --recreate             # passage complet
+```
+
+| Étape | Volume | Durée |
+|---|---:|---:|
+| Chargement | 155 documents | 0,1 s |
+| Nettoyage | 147 documents | 0,2 s |
+| Découpage | 1 607 chunks | 0,3 s |
+| Vectorisation (cache chaud) | 1 607 vecteurs | 0,5 s |
+| Upsert | 1 607 points | 3,2 s |
+| **Total** | **1 607 points, 1 536 dimensions** | **4,4 s** |
+
+**Réindexer ne change rien et ne coûte rien.** L'identifiant d'un point est `uuid5(NAMESPACE, chunk_id)` : Qdrant n'accepte que des entiers ou des UUID, et un UUID déterministe transforme la réindexation en écrasement idempotent au lieu d'une accumulation de doublons. Relancer le script sans `--recreate` laisse bien 1 607 points, en 3,5 s dont 0,1 s de vectorisation — tout sort du cache. C'est ce qui rend le script sûr à relancer vingt fois pendant l'étape 12.
+
+**Distance cosinus**, celle pour laquelle le modèle d'embeddings est entraîné. Un produit scalaire sur des vecteurs non normalisés, ou une distance euclidienne sur des vecteurs normalisés, produit des classements faux d'une manière qui reste plausible à l'œil.
+
+**La dimension du vecteur est lue sur le modèle, jamais codée en dur.** Une collection créée à la mauvaise dimension échoue bruyamment à l'upsert, mais seulement après avoir payé la vectorisation complète.
+
+**Les index de payload sur `source`, `document_id` et `language` existent dès maintenant.** Deux lignes, et le filtrage par métadonnées de l'étape 13 devient un changement à la requête plutôt qu'une réindexation. Un filtre sans index fonctionne quand même, mais en balayage.
+
+**Le texte complet du chunk vit dans le payload.** Cela coûte du disque et économise un second magasin de données plus la jointure entre les deux.
+
+Les tests d'intégration portent le marqueur `requires_qdrant` et s'ignorent d'eux-mêmes quand le serveur n'est pas joignable : `uv run pytest` reste vert sur une machine sans Docker.
+
 ## Pipeline cible
 
 ```mermaid
@@ -121,9 +155,9 @@ Ce diagramme représente la cible du projet, pas son état actuel.
 | Langage | Python 3.12+ | Configuré |
 | Gestion de projet | uv | Configuré |
 | API | FastAPI | Dépendance installée |
-| Base vectorielle | Qdrant | Configuré en local |
+| Base vectorielle | Qdrant | Corpus indexé, 1 607 points |
 | Embeddings | OpenAI `text-embedding-3-small` | Implémenté avec cache sqlite |
-| Validation | Pydantic | Dépendance installée |
+| Validation | Pydantic | Utilisé pour les modèles et la configuration |
 | Tests | pytest | Configuré |
 | Qualité | Ruff, mypy, pre-commit | Configuré |
 | Orchestration RAG | LangChain | Planifié |
@@ -150,7 +184,7 @@ uv sync --frozen
 docker compose up -d qdrant --wait
 ```
 
-Renseignez ensuite `OPENAI_API_KEY` dans `.env` : les embeddings de l'étape 05 en ont besoin. Rien ne charge `.env` automatiquement pour l'instant — les commandes qui appellent un fournisseur passent par `uv run --env-file .env`. Le module de configuration partagé arrive à l'étape 06, quand Qdrant aura le même besoin.
+Renseignez ensuite `OPENAI_API_KEY` dans `.env` : les embeddings en ont besoin. Depuis l'étape 06, `app.core.config` charge `.env` automatiquement ; `uv run --env-file .env` n'est plus nécessaire.
 
 Qdrant est alors accessible sur :
 
@@ -185,8 +219,12 @@ uv run pre-commit run --all-files
 # Récupérer le corpus (écrit dans data/raw/, non versionné)
 uv run python scripts/fetch_corpus.py
 
-# Vectoriser le corpus (premier passage payant, les suivants sortent du cache)
-uv run --env-file .env python -c "from pathlib import Path; from app.ingestion.loader import load_documents; from app.ingestion.clean import clean_document; from app.ingestion.chunk import chunk_documents; from app.ingestion.embed import embed_texts; docs=[d for d in (clean_document(x) for x in load_documents(Path('data/raw/fastapi'),'fastapi')) if d]; v=embed_texts([c.text for c in chunk_documents(docs)]); print(len(v),'vecteurs de',len(v[0]),'dimensions')"
+# Indexer le corpus dans Qdrant (premier passage payant, les suivants sortent du cache)
+uv run python scripts/index_corpus.py --limit 20 --dry-run
+uv run python scripts/index_corpus.py --recreate
+
+# Tests d'intégration Qdrant (ignorés si le serveur n'est pas joignable)
+uv run pytest -m requires_qdrant
 
 # Gérer Qdrant
 docker compose up -d qdrant --wait
@@ -200,19 +238,19 @@ docker compose down
 .
 ├── app/
 │   ├── api/          # future API FastAPI
-│   ├── core/         # future configuration partagée
+│   ├── core/         # configuration partagée
 │   ├── evaluation/   # futures métriques RAG
 │   ├── generation/   # future génération de réponses
 │   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
-│   └── retrieval/    # future recherche documentaire
+│   └── retrieval/    # indexation Qdrant, future recherche documentaire
 ├── data/
 │   ├── raw/          # sources locales non versionnées
 │   └── processed/    # données transformées non versionnées
 ├── docker/           # futurs fichiers de conteneurisation
 ├── docs/             # spécifications et plans
 ├── notebooks/        # futures expérimentations
-├── scripts/          # outils ponctuels (récupération du corpus)
+├── scripts/          # outils ponctuels (récupération du corpus, indexation)
 ├── tests/            # tests automatisés
 ├── compose.yaml      # service Qdrant local
 └── pyproject.toml    # projet et outils Python
@@ -221,7 +259,7 @@ docker compose down
 ## Roadmap
 
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
-- [ ] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking et embeddings (faits), recherche vectorielle et réponse.
+- [ ] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking, embeddings et indexation Qdrant (faits), recherche vectorielle et réponse.
 - [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
 - [ ] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG.

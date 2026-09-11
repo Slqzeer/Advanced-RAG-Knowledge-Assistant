@@ -19,6 +19,8 @@ from typing import Any
 
 from openai import OpenAI
 
+from app.core.config import get_settings
+
 DEFAULT_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 DEFAULT_CACHE_PATH = Path(os.getenv("EMBEDDING_CACHE_PATH", "data/processed/embeddings.sqlite"))
 BATCH_SIZE = 100
@@ -83,8 +85,9 @@ class EmbeddingCache:
 
 
 def build_client() -> OpenAI:
-    """The provider client, built from ``OPENAI_API_KEY`` in the environment."""
-    return OpenAI(max_retries=MAX_RETRIES)
+    """The provider client, keyed from the settings — which read ``.env`` — and
+    falling back to ``OPENAI_API_KEY`` in the environment when there is none."""
+    return OpenAI(api_key=get_settings().openai_api_key, max_retries=MAX_RETRIES)
 
 
 def embed_texts(
