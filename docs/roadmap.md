@@ -8,7 +8,7 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-07 are done. Step 08 (basic RAG) is next.**
+**Phase 0 and steps 02-08 are done — `v0.2` is tagged. Step 09 (citations) is next.**
 
 Shipped and verified:
 
@@ -26,8 +26,14 @@ Shipped and verified:
 | Shared settings | `app/core/config.py` — one `Settings`, `.env` loaded once through an `lru_cache`d accessor |
 | Qdrant indexing | `app/retrieval/store.py`, `scripts/index_corpus.py` — 1 607 points, cosine, payload indexes on `source`/`document_id`/`language`, 4.4 s end to end; a re-run leaves 1 607 points in 3.5 s |
 | Similarity search | `app/retrieval/search.py`, `scripts/search.py` — ranked `ScoredChunk`s, 119 ms warm / 0.9-1.8 s cold, 15 tests; `HTTPException 422` recorded as the hybrid-search target (1 chunk in the top 50 contains the token, at rank 5) |
+| Minimal RAG | `app/generation/{context,llm,answer}.py`, `app/models/answers.py`, `scripts/ask.py` — `gpt-4o-mini` at `temperature=0`, 1.5-3.7 s end to end, 851-1 021 tokens/question (~$0.0003), 23 tests with no network; a French question answers in French, an out-of-corpus question answers "I do not know" |
 
-The corpus is indexed and queryable. Nothing generates an answer yet: no LLM, no endpoint.
+The loop is closed: a question goes in, a grounded answer with sources comes out of `scripts/ask.py`. No HTTP endpoint yet — that is step 25 — and no citation validation yet, which is step 09.
+
+Two things step 08 measured that later steps own:
+
+- **`HTTPException 422` now fails visibly.** The answer is an honest "I do not know" because dense retrieval never surfaces the paragraph defining 422 — the step 07 finding, now costing a real answer. Step 14's target.
+- **Generation is ~95 % of the latency.** 1.5-3.7 s per question against 119 ms of warm retrieval. Any latency work before step 23's cache would be optimising the wrong 5 %.
 
 ## The three rules
 

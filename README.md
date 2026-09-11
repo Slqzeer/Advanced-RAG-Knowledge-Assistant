@@ -10,6 +10,7 @@
 - [Embeddings](#embeddings)
 - [Indexation Qdrant](#indexation-qdrant)
 - [Recherche vectorielle](#recherche-vectorielle)
+- [Génération de réponses](#génération-de-réponses)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -29,7 +30,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 1, étape 07 — recherche par similarité.** Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, et enfin **interrogeable** : une question en langue naturelle ressort les `top_k` chunks classés, avec leurs scores. Aucun LLM ni endpoint n'est encore implémenté — la réponse générée est l'étape 08.
+**Phase 1 terminée, étape 08 — RAG minimal (`v0.2`).** La boucle est fermée : une question entre, une réponse fondée sur le corpus sort, avec ses sources, ses statistiques de retrieval, ses tokens et sa latence. Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, et désormais **répondable**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -44,7 +45,8 @@ Fonctionnalités disponibles :
 - vectorisation via `app.ingestion.embed` : 1 607 chunks → 1 536 dimensions, cache sqlite persistant de 13,3 Mo, 404 s à froid puis 0,12 s à chaud ;
 - configuration partagée via `app.core.config` : une classe `Settings` lue une seule fois, qui charge `.env` ;
 - indexation dans Qdrant via `app.retrieval.store` et `scripts/index_corpus.py` : 1 607 points, distance cosinus, index de payload sur `source`, `document_id` et `language` ;
-- recherche par similarité via `app.retrieval.search` et `scripts/search.py` : `search()` rend des `ScoredChunk` classés à partir du rang 1, 119 ms sur requête déjà vectorisée.
+- recherche par similarité via `app.retrieval.search` et `scripts/search.py` : `search()` rend des `ScoredChunk` classés à partir du rang 1, 119 ms sur requête déjà vectorisée ;
+- génération de réponses via `app.generation` et `scripts/ask.py` : contexte numéroté, appel au modèle à `temperature=0`, objet `Answer` avec sources, statistiques, tokens et latence ; 1,5 à 3,7 s de bout en bout, 851 à 1 021 tokens par question.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
@@ -159,6 +161,65 @@ uv run python scripts/search.py "HTTPException 422" --top-k 10 --source fastapi
 
 Le client Qdrant et la fonction de vectorisation sont des paramètres injectables : les treize tests unitaires de l'étape tournent sans serveur et sans clé d'API. Les deux tests d'intégration portent le marqueur `requires_qdrant`.
 
+## Génération de réponses
+
+Quatre fonctions, montées à la main, et rien entre elles :
+
+```text
+search() -> build_context() -> complete() -> Answer
+```
+
+```powershell
+uv run python scripts/ask.py "How does dependency injection work in FastAPI?"
+uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?" --show-context
+```
+
+Une question réelle, sur les 1 607 chunks indexés :
+
+```text
+> uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?"
+
+L'injection de dépendances dans FastAPI fonctionne en permettant à vos fonctions
+d'opération de chemin de déclarer les dépendances dont elles ont besoin pour
+fonctionner. FastAPI s'occupe ensuite de fournir ces dépendances en les
+« injectant » dans votre code [1][2].
+
+Lorsqu'une nouvelle requête arrive, FastAPI appelle la fonction de dépendance avec
+les paramètres appropriés, obtient le résultat de cette fonction et l'assigne au
+paramètre de votre fonction d'opération de chemin [4]. Cela permet de partager la
+logique de code et les connexions à la base de données, d'appliquer des exigences
+de sécurité et d'authentification, tout en minimisant la répétition [2].
+
+[1] Dependencies  (0.6773)
+    https://fastapi.tiangolo.com/tutorial/dependencies/
+[2] Dependencies  (0.6319)
+    https://fastapi.tiangolo.com/tutorial/dependencies/
+[3] Dependencies with yield / Sub-dependencies with `yield`  (0.6309)
+    https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/
+[4] Dependencies / Declare the dependency, in the "dependant"  (0.6102)
+    https://fastapi.tiangolo.com/tutorial/dependencies/
+[5] Dependencies / Simple usage  (0.6086)
+    https://fastapi.tiangolo.com/tutorial/dependencies/
+
+5 retrieved, 5 used, 0 dropped  |  gpt-4o-mini  |  1021 tokens  |  3697 ms
+```
+
+**Corpus anglais, question française, réponse française.** Le prompt système impose la langue de la question. Sans cette ligne, le système répond en anglais à une question française et paraît cassé.
+
+**Zéro chunk retrouvé veut dire zéro appel au modèle.** Avec un contexte vide, la seule chose qu'un modèle puisse produire est une invention — facturée. Le court-circuit est testé explicitement ; c'est la faute la moins pardonnable d'un pipeline RAG.
+
+**Les chunks entrent entiers ou pas du tout.** Le budget de contexte vaut 12 000 caractères et se respecte en écartant les chunks les moins bien classés, jamais en tronquant : un demi-chunk est un demi-fait, que le modèle complète avec aplomb. Exception assumée : si le premier chunk dépasse à lui seul le budget, il est conservé quand même, un contexte vide étant pire qu'un contexte trop long.
+
+**`temperature=0`.** Un système qui répond différemment au deuxième appel identique n'est pas évaluable, et les étapes 11 et 21 sont des évaluations.
+
+**Ce qu'il ignore, il le dit.** « How do I limit memory for a Kubernetes pod ? » — hors corpus — obtient « I do not know », pas une invention plausible. « What does HTTPException 422 mean ? » obtient la même réponse, et c'est cette fois un échec de *retrieval* : la recherche dense remonte la bonne famille de pages entre 0,32 et 0,41, jamais le paragraphe qui définit 422. Le constat de l'étape 07 se paie ici, et c'est exactement ce que la recherche hybride de l'étape 14 doit corriger.
+
+**Un modèle, choisi par configuration.** `GENERATION_MODEL` vaut `gpt-4o-mini` par défaut, la clé OpenAI étant déjà requise pour les embeddings : une dépendance, un identifiant. Changer de fournisseur, c'est réécrire le corps de `complete()` dans `app/generation/llm.py` — rien d'autre du pipeline ne voit de client.
+
+**Les tokens sont relevés dès le premier appel.** L'étape 24 en a besoin ; les ajouter plus tard voudrait dire toucher tous les appelants.
+
+Les vingt-trois tests de l'étape tournent sans serveur, sans clé et sans dépense : le récupérateur et le modèle sont injectables.
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -211,6 +272,7 @@ Ce diagramme représente la cible du projet, pas son état actuel.
 | API | FastAPI | Dépendance installée |
 | Base vectorielle | Qdrant | Corpus indexé et interrogeable, 1 607 points |
 | Embeddings | OpenAI `text-embedding-3-small` | Implémenté avec cache sqlite |
+| Génération | OpenAI `gpt-4o-mini`, `temperature=0` | Implémentée, pipeline monté à la main |
 | Validation | Pydantic | Utilisé pour les modèles et la configuration |
 | Tests | pytest | Configuré |
 | Qualité | Ruff, mypy, pre-commit | Configuré |
@@ -281,6 +343,10 @@ uv run python scripts/index_corpus.py --recreate
 uv run python scripts/search.py "How does dependency injection work in FastAPI?"
 uv run python scripts/search.py "HTTPException 422" --top-k 10 --source fastapi
 
+# Poser une question et obtenir une réponse sourcée
+uv run python scripts/ask.py "How does dependency injection work in FastAPI?"
+uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?" --show-context
+
 # Tests d'intégration Qdrant (ignorés si le serveur n'est pas joignable)
 uv run pytest -m requires_qdrant
 
@@ -298,7 +364,7 @@ docker compose down
 │   ├── api/          # future API FastAPI
 │   ├── core/         # configuration partagée
 │   ├── evaluation/   # futures métriques RAG
-│   ├── generation/   # future génération de réponses
+│   ├── generation/   # contexte, appel au modèle, orchestration
 │   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
 │   └── retrieval/    # indexation Qdrant et recherche par similarité
@@ -308,7 +374,7 @@ docker compose down
 ├── docker/           # futurs fichiers de conteneurisation
 ├── docs/             # spécifications et plans
 ├── notebooks/        # futures expérimentations
-├── scripts/          # outils ponctuels (corpus, indexation, recherche)
+├── scripts/          # outils ponctuels (corpus, indexation, recherche, questions)
 ├── tests/            # tests automatisés
 ├── compose.yaml      # service Qdrant local
 └── pyproject.toml    # projet et outils Python
@@ -317,7 +383,7 @@ docker compose down
 ## Roadmap
 
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
-- [ ] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking, embeddings, indexation Qdrant et recherche vectorielle (faits), génération de la réponse.
+- [x] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking, embeddings, indexation Qdrant et recherche vectorielle (faits), génération de la réponse.
 - [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
 - [ ] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG.
@@ -342,11 +408,14 @@ Les résultats seront ajoutés avec les phases correspondantes. Une valeur absen
 | Version | Recall@5 | Recall@10 | MRR | Latence | Coût |
 |---|---:|---:|---:|---:|---:|
 | Recherche vectorielle naïve | — | — | — | 119 ms* | — |
+| RAG minimal (`v0.2`) | — | — | — | 1,5 à 3,7 s** | ~0,0003 $ / question** |
 | Chunking amélioré | — | — | — | — | — |
 | Recherche hybride | — | — | — | — | — |
 | Reranking | — | — | — | — | — |
 
 \* Latence de recherche seule, vecteur de requête déjà en cache ; 0,9 à 1,8 s quand il faut le calculer. Les métriques de qualité arrivent avec l'étape 11, qui construit le jeu d'évaluation.
+
+\*\* Bout en bout via `scripts/ask.py`, sur quatre questions réelles : 851 à 1 021 tokens par appel à `gpt-4o-mini`, soit environ 0,0003 $ l'unité aux tarifs affichés. La génération domine, elle pèse plus de 95 % du temps de réponse.
 
 ## Qualité et CI
 
