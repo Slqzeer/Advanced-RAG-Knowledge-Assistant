@@ -7,7 +7,7 @@ from qdrant_client import QdrantClient
 
 from app.core.config import Settings, get_settings
 from app.models.chunks import Chunk, ScoredChunk
-from app.retrieval.search import search
+from app.retrieval.search import parse_filters, search
 from app.retrieval.store import chunk_from_payload, ensure_collection, get_client, upsert_chunks
 
 SETTINGS = Settings(qdrant_collection="chunks", openai_api_key=None)
@@ -90,20 +90,74 @@ def test_the_query_is_embedded_once_per_call() -> None:
     assert embedder.calls == ["how do dependencies work"]
 
 
-def test_a_source_becomes_a_payload_filter() -> None:
+def test_a_scalar_filter_becomes_a_match_value() -> None:
     client = FakeClient()
-    run(client=client, source="fastapi")
-    query_filter = client.calls[0]["query_filter"]
-    assert query_filter is not None
-    [condition] = query_filter.must
+    run(client=client, filters={"source": "fastapi"})
+    [condition] = client.calls[0]["query_filter"].must
     assert condition.key == "source"
     assert condition.match.value == "fastapi"
 
 
-def test_no_source_means_no_filter() -> None:
+def test_a_sequence_filter_becomes_a_match_any() -> None:
+    client = FakeClient()
+    run(client=client, filters={"doc_type": ["tutorial", "advanced"]})
+    [condition] = client.calls[0]["query_filter"].must
+    assert condition.key == "doc_type"
+    assert condition.match.any == ["tutorial", "advanced"]
+
+
+def test_two_filters_are_anded_in_a_stable_order() -> None:
+    client = FakeClient()
+    run(client=client, filters={"doc_type": "tutorial", "source": "fastapi"})
+    assert [c.key for c in client.calls[0]["query_filter"].must] == ["doc_type", "source"]
+
+
+def test_no_filters_means_no_filter() -> None:
     client = FakeClient()
     run(client=client)
     assert client.calls[0]["query_filter"] is None
+
+
+def test_an_empty_filters_mapping_means_no_filter() -> None:
+    client = FakeClient()
+    run(client=client, filters={})
+    assert client.calls[0]["query_filter"] is None
+
+
+def test_an_unindexed_filter_key_is_rejected_by_name() -> None:
+    """A typo'd key would otherwise scan the whole collection and match nothing."""
+    with pytest.raises(ValueError, match="doctype"):
+        run(filters={"doctype": "tutorial"})
+
+
+def test_an_empty_value_list_is_rejected() -> None:
+    """MatchAny([]) matches nothing, which reads as 'retrieval is broken'."""
+    with pytest.raises(ValueError, match="doc_type"):
+        run(filters={"doc_type": []})
+
+
+def test_parse_filters_reads_key_value_pairs() -> None:
+    assert parse_filters(["source=fastapi"]) == {"source": ["fastapi"]}
+
+
+def test_parse_filters_splits_comma_separated_values() -> None:
+    assert parse_filters(["doc_type=tutorial,advanced"]) == {"doc_type": ["tutorial", "advanced"]}
+
+
+def test_parse_filters_merges_a_repeated_key() -> None:
+    assert parse_filters(["doc_type=tutorial", "doc_type=advanced"]) == {
+        "doc_type": ["tutorial", "advanced"]
+    }
+
+
+def test_parse_filters_rejects_a_pair_with_no_equals() -> None:
+    with pytest.raises(ValueError, match="key=value"):
+        parse_filters(["doc_type"])
+
+
+def test_parse_filters_rejects_an_empty_value() -> None:
+    with pytest.raises(ValueError, match="doc_type"):
+        parse_filters(["doc_type="])
 
 
 def test_a_missing_optional_payload_key_is_none_not_an_error() -> None:
@@ -225,8 +279,17 @@ def test_the_right_document_ranks_first(indexed: Settings) -> None:
 
 
 @requires_qdrant
-def test_a_source_filter_that_matches_nothing_returns_nothing(indexed: Settings) -> None:
-    assert search("dependency injection", source="django", settings=indexed) == []
+def test_a_filter_that_matches_nothing_returns_nothing(indexed: Settings) -> None:
+    assert search("dependency injection", filters={"source": "django"}, settings=indexed) == []
+
+
+@requires_qdrant
+def test_a_doc_type_filter_restricts_results_to_that_facet(indexed: Settings) -> None:
+    results = search(
+        "dependency injection", top_k=5, filters={"doc_type": "tutorial"}, settings=indexed
+    )
+    assert results
+    assert {scored.chunk.doc_type for scored in results} == {"tutorial"}
 
 
 def test_the_payload_mapper_is_the_one_from_the_store() -> None:

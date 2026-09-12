@@ -144,11 +144,11 @@ def test_a_refusal_with_context_available_is_not_flagged() -> None:
     assert (answer.answer, answer.sources, answer.warnings) == (refusal, [], [])
 
 
-def test_the_retriever_gets_top_k_and_the_source_filter() -> None:
+def test_the_retriever_gets_top_k_and_the_filters() -> None:
     retriever = FakeRetriever()
-    ask(retriever=retriever, top_k=7, source="fastapi")
+    ask(retriever=retriever, top_k=7, filters={"doc_type": "tutorial"})
     assert retriever.calls[0]["top_k"] == 7
-    assert retriever.calls[0]["source"] == "fastapi"
+    assert retriever.calls[0]["filters"] == {"doc_type": "tutorial"}
 
 
 def test_top_k_falls_back_to_the_settings() -> None:

@@ -16,7 +16,7 @@ from app.generation.context import MAX_CONTEXT_CHARS, build_context
 from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE, complete
 from app.models.answers import Answer, RetrievalStats
 from app.models.chunks import ScoredChunk
-from app.retrieval.search import search
+from app.retrieval.search import Filters, search
 
 Retriever = Callable[..., list[ScoredChunk]]
 Completer = Callable[..., tuple[str, dict[str, int]]]
@@ -32,7 +32,7 @@ def answer_question(
     question: str,
     *,
     top_k: int | None = None,
-    source: str | None = None,
+    filters: Filters | None = None,
     max_context_chars: int = MAX_CONTEXT_CHARS,
     strict: bool = False,
     settings: Settings | None = None,
@@ -56,7 +56,7 @@ def answer_question(
     llm = llm or complete
     started = time.perf_counter()
 
-    chunks = retriever(question, top_k=top_k or settings.top_k, source=source, settings=settings)
+    chunks = retriever(question, top_k=top_k or settings.top_k, filters=filters, settings=settings)
     context, sources, dropped = build_context(chunks, max_chars=max_context_chars)
     # Counted before validation trims ``sources`` to the cited subset: how many
     # chunks reached the model is a retrieval fact, not a citation one.

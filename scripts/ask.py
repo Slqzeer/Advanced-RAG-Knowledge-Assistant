@@ -1,6 +1,7 @@
 """Ask the corpus a question and read the answer it grounds in.
 
-    uv run python scripts/ask.py "question" [--top-k 5] [--source fastapi] [--show-context]
+    uv run python scripts/ask.py "question" [--top-k 5] [--filter doc_type=tutorial]
+                                           [--show-context]
 
 ``--show-context`` prints the exact prompt that was sent. It is the debugging
 tool you will reach for every time an answer looks wrong: nine times out of ten
@@ -16,14 +17,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.generation.answer import answer_question  # noqa: E402
 from app.generation.context import build_context  # noqa: E402
 from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE  # noqa: E402
-from app.retrieval.search import search  # noqa: E402
+from app.retrieval.search import parse_filters, search  # noqa: E402
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("question")
     parser.add_argument("--top-k", type=int, default=None)
-    parser.add_argument("--source", help="restrict to one corpus, e.g. fastapi")
+    parser.add_argument(
+        "--filter",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="repeatable; e.g. --filter doc_type=tutorial --filter doc_type=tutorial,advanced",
+    )
     parser.add_argument(
         "--show-context", action="store_true", help="print the prompt that was sent"
     )
@@ -33,18 +40,17 @@ def main() -> int:
     args = parser.parse_args()
     # The corpus is full of emoji and the Windows console defaults to cp1252.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    filters = parse_filters(args.filter)
 
     if args.show_context:
         # Rebuilt rather than returned by answer_question: the prompt is a
         # debugging artefact, not part of the API contract step 25 serves.
-        chunks = search(args.question, top_k=args.top_k or 5, source=args.source)
+        chunks = search(args.question, top_k=args.top_k or 5, filters=filters)
         context, _, _ = build_context(chunks)
         print(f"--- system ---\n{SYSTEM_PROMPT}\n")
         print(f"--- user ---\n{USER_TEMPLATE.format(context=context, question=args.question)}\n")
 
-    answer = answer_question(
-        args.question, top_k=args.top_k, source=args.source, strict=args.strict
-    )
+    answer = answer_question(args.question, top_k=args.top_k, filters=filters, strict=args.strict)
 
     print(f"{answer.answer}\n")
     # Above the sources, not below: a warning under a tidy citation list is a

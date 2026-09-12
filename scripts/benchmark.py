@@ -1,6 +1,7 @@
 """Run the evaluation set against dense retrieval and publish the numbers.
 
     uv run python scripts/benchmark.py --label "dense-baseline"
+    uv run python scripts/benchmark.py --label "tutorial" --filter doc_type=tutorial
     uv run python scripts/benchmark.py --label "hybrid" --compare "dense-baseline"
     uv run python scripts/benchmark.py --summary "chunk-*"
 
@@ -26,7 +27,7 @@ from app.evaluation.benchmark import (  # noqa: E402
     summarise,
 )
 from app.evaluation.dataset import load_dataset  # noqa: E402
-from app.retrieval.search import search  # noqa: E402
+from app.retrieval.search import parse_filters, search  # noqa: E402
 
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
 HISTORY = Path("data/eval/results.jsonl")
@@ -128,7 +129,13 @@ def main() -> int:
     )
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--top-k", type=int, default=max(KS))
-    parser.add_argument("--source", help="restrict to one corpus, e.g. fastapi")
+    parser.add_argument(
+        "--filter",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="repeatable; e.g. --filter doc_type=tutorial --filter doc_type=tutorial,advanced",
+    )
     parser.add_argument("--collection", help="default: QDRANT_COLLECTION")
     # Recorded, not used: the collection cannot tell us how it was chunked, and a
     # summary row that says "recursive" for every strategy is worse than no row.
@@ -162,13 +169,17 @@ def main() -> int:
     result = run_benchmark(
         questions,
         lambda text: search(
-            text, top_k=args.top_k, source=args.source, collection=collection, settings=settings
+            text,
+            top_k=args.top_k,
+            filters=parse_filters(args.filter) or None,
+            collection=collection,
+            settings=settings,
         ),
         ks=[k for k in KS if k <= args.top_k],
         label=args.label,
         config={
             "top_k": args.top_k,
-            "source": args.source,
+            "filters": parse_filters(args.filter) or None,
             "dataset": str(args.dataset),
             "held_out": args.include_held_out,
             "collection": collection,
