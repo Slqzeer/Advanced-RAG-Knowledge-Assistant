@@ -13,7 +13,7 @@ from typing import Literal, get_args
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Category = Literal["conceptual", "exact", "code", "multi_doc", "unanswerable"]
-CATEGORIES: tuple[str, ...] = get_args(Category)
+CATEGORIES: tuple[Category, ...] = get_args(Category)
 
 
 class EvalQuestion(BaseModel):
