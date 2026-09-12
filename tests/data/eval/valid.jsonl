@@ -1,0 +1,5 @@
+# Comment lines and blank lines are skipped, so the file can be annotated.
+{"question_id": "q001", "question": "How does dependency injection work?", "category": "conceptual", "relevant_document_ids": ["fastapi:tutorial/dependencies/index"]}
+
+{"question_id": "q002", "question": "HTTPException 422", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/handling-errors"], "held_out": true}
+{"question_id": "q003", "question": "How do I configure nginx?", "category": "unanswerable", "relevant_document_ids": [], "notes": "another tool entirely"}
