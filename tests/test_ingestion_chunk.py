@@ -27,6 +27,7 @@ def document(text: str, **overrides: object) -> RawDocument:
         "source": "fastapi",
         "title": "Tutorial",
         "path": "tutorial/index.md",
+        "doc_type": "tutorial",
         "url": "https://fastapi.tiangolo.com/tutorial/",
         "text": text,
         "content_hash": "deadbeef",

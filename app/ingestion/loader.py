@@ -34,6 +34,16 @@ def _extract_title(text: str, path: Path) -> str:
     return path.stem.replace("-", " ").replace("_", " ").title()
 
 
+def doc_type_of(relative_path: str) -> str:
+    """The corpus section a path belongs to: its first directory, or ``root``.
+
+    Derived rather than mapped, so a second source with a different layout gets
+    its own facets for free instead of silently collapsing into ``other``.
+    """
+    head, _, tail = relative_path.partition("/")
+    return head if tail else "root"
+
+
 def load_document(path: Path, root: Path, source: str, base_url: str | None = None) -> RawDocument:
     text = path.read_text(encoding="utf-8", errors="replace")
     relative = path.relative_to(root).as_posix()
@@ -45,6 +55,7 @@ def load_document(path: Path, root: Path, source: str, base_url: str | None = No
         source=source,
         title=_extract_title(text, path),
         path=relative,
+        doc_type=doc_type_of(relative),
         url=None if base_url is None else f"{base_url}/{slug}/" if slug else f"{base_url}/",
         text=text,
         content_hash=hashlib.sha256(path.read_bytes()).hexdigest(),

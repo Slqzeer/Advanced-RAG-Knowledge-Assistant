@@ -261,6 +261,7 @@ def _document(text: str) -> RawDocument:
         source="fastapi",
         title="FastAPI",
         path="docs/index.md",
+        doc_type="docs",
         url=None,
         text=text,
         content_hash="0" * 64,
