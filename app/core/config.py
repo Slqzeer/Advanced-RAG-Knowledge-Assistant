@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # Step 14-16 compared three. The default changes only if the sweep meets the
     # rule in the step 14-16 design doc: dense | lexical | hybrid.
     retrieval_mode: str = "dense"
+    # Per-branch depth before fusion. Fusing two top-10 lists cannot surface a
+    # document neither branch ranked top-10, so this is the parameter that moves
+    # recall; step 16 sweeps it.
+    retrieval_candidates: int = 50
+    # The constant from the original RRF paper. Larger flattens the rank
+    # weighting, smaller sharpens it.
+    rrf_k: int = 60
     corpus_dir: Path = Path("data/raw")
 
 

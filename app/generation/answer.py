@@ -32,6 +32,7 @@ def answer_question(
     question: str,
     *,
     top_k: int | None = None,
+    mode: str | None = None,
     filters: Filters | None = None,
     max_context_chars: int = MAX_CONTEXT_CHARS,
     strict: bool = False,
@@ -47,6 +48,9 @@ def answer_question(
 
     ``strict`` turns an invented citation from a warning into a ``ValueError``,
     which is what an evaluation run wants and what a demo does not.
+
+    ``mode`` selects the retriever; it is threaded straight through so the
+    measured winner of step 16 reaches the answer, not only the benchmark.
     """
     if not question.strip():
         raise ValueError("question is empty")
@@ -56,7 +60,9 @@ def answer_question(
     llm = llm or complete
     started = time.perf_counter()
 
-    chunks = retriever(question, top_k=top_k or settings.top_k, filters=filters, settings=settings)
+    chunks = retriever(
+        question, top_k=top_k or settings.top_k, mode=mode, filters=filters, settings=settings
+    )
     context, sources, dropped = build_context(chunks, max_chars=max_context_chars)
     # Counted before validation trims ``sources`` to the cited subset: how many
     # chunks reached the model is a retrieval fact, not a citation one.

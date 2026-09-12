@@ -8,7 +8,7 @@ from qdrant_client import QdrantClient
 from app.core.config import Settings, get_settings
 from app.models.chunks import Chunk, ScoredChunk
 from app.retrieval.bm25 import BM25Index
-from app.retrieval.search import matches_filters, parse_filters, search
+from app.retrieval.search import matches_filters, parse_filters, rrf, search
 from app.retrieval.store import chunk_from_payload, ensure_collection, get_client, upsert_chunks
 
 SETTINGS = Settings(qdrant_collection="chunks", openai_api_key=None, retrieval_mode="dense")
@@ -457,3 +457,129 @@ def test_lexical_mode_rejects_an_unindexed_filter_key_before_searching() -> None
     """Eagerly, not once per candidate chunk: a typo must fail the call."""
     with pytest.raises(ValueError, match="doctype"):
         run("error", mode="lexical", index=filtered_index(), filters={"doctype": "tutorial"})
+
+
+# --- RRF and hybrid mode (step 16) ----------------------------------------
+
+
+def scored_list(*indices: int) -> list[ScoredChunk]:
+    """A ranked list of chunks, identified by chunk_index, ranked from 1."""
+    return [
+        ScoredChunk(
+            chunk=Chunk.model_validate(make_payload(index)), score=1.0 - 0.1 * rank, rank=rank
+        )
+        for rank, index in enumerate(indices, start=1)
+    ]
+
+
+def indices_of(results: list[ScoredChunk]) -> list[int]:
+    return [scored.chunk.chunk_index for scored in results]
+
+
+def test_rrf_prefers_a_chunk_ranked_second_by_both_over_one_ranked_first_by_one() -> None:
+    """The whole reason to fuse ranks: broad agreement beats a single strong vote.
+    Chunk 9 scores 2/(60+2) = 0.0323; chunk 1 scores 1/(60+1) = 0.0164."""
+    fused = rrf([scored_list(1, 9), scored_list(2, 9)], k=60, top_k=3)
+    assert indices_of(fused)[0] == 9
+
+
+def test_rrf_deduplicates_a_chunk_appearing_in_both_rankings() -> None:
+    fused = rrf([scored_list(1, 2), scored_list(2, 1)], k=60, top_k=10)
+    assert sorted(indices_of(fused)) == [1, 2]
+
+
+def test_rrf_ignores_the_input_scores_entirely() -> None:
+    """A cosine and a BM25 score share no scale; using them would invent a
+    comparison the numbers do not support."""
+    high = scored_list(1)
+    low = [ScoredChunk(chunk=high[0].chunk, score=0.0001, rank=1)]
+    assert rrf([low], k=60, top_k=1)[0].score == rrf([high], k=60, top_k=1)[0].score
+
+
+def test_rrf_ranks_from_one_and_scores_descending() -> None:
+    fused = rrf([scored_list(1, 2, 3)], k=60, top_k=3)
+    assert [scored.rank for scored in fused] == [1, 2, 3]
+    assert [s.score for s in fused] == sorted([s.score for s in fused], reverse=True)
+
+
+def test_rrf_score_is_the_fused_score_not_a_cosine() -> None:
+    """Documented consequence: abstention_rate is not comparable across modes."""
+    assert rrf([scored_list(1)], k=60, top_k=1)[0].score == pytest.approx(1 / 61)
+
+
+def test_rrf_caps_at_top_k() -> None:
+    assert len(rrf([scored_list(1, 2, 3, 4, 5)], k=60, top_k=2)) == 2
+
+
+def test_rrf_with_an_empty_ranking_still_fuses_the_other() -> None:
+    """A lexical query whose terms are all unknown returns nothing; hybrid mode
+    must degrade to dense rather than fail."""
+    assert indices_of(rrf([scored_list(1, 2), []], k=60, top_k=2)) == [1, 2]
+
+
+def test_rrf_rejects_a_k_below_one() -> None:
+    with pytest.raises(ValueError, match="rrf_k"):
+        rrf([scored_list(1)], k=0, top_k=1)
+
+
+def test_hybrid_mode_queries_both_branches_at_the_candidate_depth() -> None:
+    client, embedder = FakeClient(), FakeEmbedder()
+    run(
+        "error",
+        mode="hybrid",
+        client=client,
+        embedder=embedder,
+        index=bm25_index("an error occurred", "another error"),
+        top_k=2,
+        candidates=50,
+    )
+    assert client.calls[0]["limit"] == 50
+    assert embedder.calls == ["error"]
+
+
+def test_hybrid_mode_returns_top_k_not_candidates() -> None:
+    results = run(
+        "error",
+        mode="hybrid",
+        client=FakeClient(),
+        index=bm25_index("an error occurred", "another error"),
+        top_k=3,
+        candidates=10,
+    )
+    assert len(results) == 3
+    assert [scored.rank for scored in results] == [1, 2, 3]
+
+
+def test_candidates_below_top_k_is_rejected() -> None:
+    """Fusing two top-3 lists cannot produce 10 results; a silent short list
+    would read downstream as a recall drop."""
+    with pytest.raises(ValueError, match="candidates"):
+        run("error", mode="hybrid", top_k=10, candidates=3, index=bm25_index("error"))
+
+
+def test_hybrid_mode_honours_filters_on_both_branches() -> None:
+    client = FakeClient()
+    run(
+        "error",
+        mode="hybrid",
+        client=client,
+        index=filtered_index(),
+        filters={"doc_type": "reference"},
+        top_k=5,
+        candidates=5,
+    )
+    [condition] = client.calls[0]["query_filter"].must
+    assert condition.key == "doc_type"
+
+
+def test_candidates_and_rrf_k_fall_back_to_the_settings() -> None:
+    client = FakeClient()
+    run(
+        "error",
+        mode="hybrid",
+        settings=Settings(qdrant_collection="chunks", retrieval_candidates=30, rrf_k=20),
+        client=client,
+        index=bm25_index("an error occurred"),
+        top_k=5,
+    )
+    assert client.calls[0]["limit"] == 30

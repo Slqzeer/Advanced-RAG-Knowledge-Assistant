@@ -74,6 +74,7 @@ class BenchmarkResult:
 
 SUMMARY_COLUMNS = (
     "label",
+    "mode",
     "strategy",
     "size",
     "overlap",
@@ -98,6 +99,9 @@ def summarise(history: Sequence[Mapping[str, Any]], pattern: str) -> list[list[s
     return [
         [
             label,
+            # "dense" rather than "?": every row written before step 14 genuinely
+            # was a dense run.
+            str(row["config"].get("mode", "dense")),
             str(row["config"].get("strategy", "?")),
             str(row["config"].get("chunk_size", "?")),
             str(row["config"].get("chunk_overlap", "?")),

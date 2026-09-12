@@ -4,6 +4,7 @@
     uv run python scripts/benchmark.py --label "tutorial" --filter doc_type=tutorial
     uv run python scripts/benchmark.py --label "oracle" --oracle-filter
     uv run python scripts/benchmark.py --label "bm25-sentence" --mode lexical
+    uv run python scripts/benchmark.py --label "hybrid-k60-d50" --mode hybrid --candidates 50
     uv run python scripts/benchmark.py --label "hybrid" --compare "dense-baseline"
     uv run python scripts/benchmark.py --summary "chunk-*"
 
@@ -31,6 +32,7 @@ from app.evaluation.benchmark import (  # noqa: E402
 )
 from app.evaluation.dataset import load_dataset  # noqa: E402
 from app.models.chunks import ScoredChunk  # noqa: E402
+from app.retrieval.bm25 import default_index  # noqa: E402
 from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
@@ -165,6 +167,12 @@ def main() -> int:
     )
     parser.add_argument("--collection", help="default: QDRANT_COLLECTION")
     parser.add_argument("--mode", choices=sorted(RETRIEVERS), help="default: RETRIEVAL_MODE")
+    parser.add_argument(
+        "--candidates",
+        type=int,
+        help="per-branch depth before fusion; default: RETRIEVAL_CANDIDATES",
+    )
+    parser.add_argument("--rrf-k", type=int, help="RRF constant; default: RRF_K")
     # Recorded, not used: the collection cannot tell us how it was chunked, and a
     # summary row that says "recursive" for every strategy is worse than no row.
     parser.add_argument("--strategy", help="how --collection was chunked; recorded only")
@@ -202,6 +210,13 @@ def main() -> int:
     if args.oracle_filter and len(oracle) != len(questions):
         raise SystemExit("two questions share the same text; the oracle lookup would be wrong")
 
+    mode = args.mode or settings.retrieval_mode
+    if mode != "dense":
+        # Built here, outside the timed loop, on purpose: the ~200 ms
+        # construction charged to the first question would make the p50 column
+        # stop meaning per-query retrieval latency, which is all it is used for.
+        default_index(settings, collection)
+
     def retrieve(text: str) -> list[ScoredChunk]:
         filters: dict[str, str | list[str]] = dict(base_filters)
         if facet := oracle.get(text):
@@ -209,7 +224,9 @@ def main() -> int:
         return search(
             text,
             top_k=args.top_k,
-            mode=args.mode,
+            mode=mode,
+            candidates=args.candidates,
+            rrf_k=args.rrf_k,
             filters=filters or None,
             collection=collection,
             settings=settings,
@@ -222,7 +239,9 @@ def main() -> int:
         label=args.label,
         config={
             "top_k": args.top_k,
-            "mode": args.mode or settings.retrieval_mode,
+            "mode": mode,
+            "candidates": args.candidates or settings.retrieval_candidates,
+            "rrf_k": args.rrf_k or settings.rrf_k,
             "filters": base_filters or None,
             "oracle_filter": args.oracle_filter,
             "dataset": str(args.dataset),

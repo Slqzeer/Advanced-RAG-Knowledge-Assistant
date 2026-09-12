@@ -1,7 +1,7 @@
 """Ask the corpus a question and read the answer it grounds in.
 
-    uv run python scripts/ask.py "question" [--top-k 5] [--filter doc_type=tutorial]
-                                           [--show-context]
+    uv run python scripts/ask.py "question" [--top-k 5] [--mode hybrid]
+                                           [--filter doc_type=tutorial] [--show-context]
 
 ``--show-context`` prints the exact prompt that was sent. It is the debugging
 tool you will reach for every time an answer looks wrong: nine times out of ten
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.generation.answer import answer_question  # noqa: E402
 from app.generation.context import build_context  # noqa: E402
 from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE  # noqa: E402
-from app.retrieval.search import parse_filters, search  # noqa: E402
+from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 
 
 def main() -> int:
@@ -31,6 +31,7 @@ def main() -> int:
         metavar="KEY=VALUE",
         help="repeatable; e.g. --filter doc_type=tutorial --filter doc_type=tutorial,advanced",
     )
+    parser.add_argument("--mode", choices=sorted(RETRIEVERS), help="default: RETRIEVAL_MODE")
     parser.add_argument(
         "--show-context", action="store_true", help="print the prompt that was sent"
     )
@@ -45,12 +46,14 @@ def main() -> int:
     if args.show_context:
         # Rebuilt rather than returned by answer_question: the prompt is a
         # debugging artefact, not part of the API contract step 25 serves.
-        chunks = search(args.question, top_k=args.top_k or 5, filters=filters)
+        chunks = search(args.question, top_k=args.top_k or 5, mode=args.mode, filters=filters)
         context, _, _ = build_context(chunks)
         print(f"--- system ---\n{SYSTEM_PROMPT}\n")
         print(f"--- user ---\n{USER_TEMPLATE.format(context=context, question=args.question)}\n")
 
-    answer = answer_question(args.question, top_k=args.top_k, filters=filters, strict=args.strict)
+    answer = answer_question(
+        args.question, top_k=args.top_k, mode=args.mode, filters=filters, strict=args.strict
+    )
 
     print(f"{answer.answer}\n")
     # Above the sources, not below: a warning under a tidy citation list is a

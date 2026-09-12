@@ -6,6 +6,7 @@ RRF, reranking, query rewriting — without touching this signature. Everything
 here is deliberately thin so that stays true.
 """
 
+from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -146,10 +147,75 @@ def _lexical(
     return index.search(query, top_k, predicate=lambda chunk: matches_filters(chunk, filters))
 
 
+def rrf(rankings: Sequence[Sequence[ScoredChunk]], *, k: int, top_k: int) -> list[ScoredChunk]:
+    """Reciprocal Rank Fusion: ``sum(1 / (k + rank))`` over the lists a chunk is in.
+
+    Ranks only, never scores, and that is the entire point. A cosine similarity
+    and a BM25 score share no scale; normalising them per query would invent a
+    comparison the numbers do not support, which is the "layer that lies" this
+    module refuses elsewhere.
+
+    The returned ``score`` is the fused one — around 0.03, not a cosine's
+    0.3-0.6. It is what produced the ranking, so it is what gets reported, and
+    that makes ``benchmark.DEFAULT_ABSTENTION_THRESHOLD`` meaningless outside
+    dense mode. Step 22 owns refusal; each run records its ``mode`` so the two
+    are never compared by accident.
+    """
+    if k < 1:
+        raise ValueError(f"rrf_k must be at least 1, got {k}")
+    fused: dict[str, float] = defaultdict(float)
+    chunks: dict[str, Chunk] = {}
+    for ranking in rankings:
+        for scored in ranking:
+            chunk_id = scored.chunk.chunk_id
+            fused[chunk_id] += 1.0 / (k + scored.rank)
+            chunks.setdefault(chunk_id, scored.chunk)
+    # chunk_id breaks ties so two runs of one commit agree.
+    ordered = sorted(fused.items(), key=lambda item: (-item[1], item[0]))
+    return [
+        ScoredChunk(chunk=chunks[chunk_id], score=score, rank=rank)
+        for rank, (chunk_id, score) in enumerate(ordered[:top_k], start=1)
+    ]
+
+
+def _hybrid(
+    query: str,
+    *,
+    top_k: int,
+    candidates: int,
+    rrf_k: int,
+    filters: Filters | None,
+    collection: str,
+    client: QdrantClient,
+    embedder: Embedder,
+    index: BM25Index,
+) -> list[ScoredChunk]:
+    """Both branches to ``candidates`` depth, then fused to ``top_k``.
+
+    ``candidates`` is validated here rather than in ``search()``: the
+    single-branch modes ignore it, and rejecting a call they would have served
+    correctly names a parameter that branch never reads.
+    """
+    if candidates < top_k:
+        # Fusing two top-3 lists cannot produce 10 results, and a silently short
+        # list reads downstream as a recall drop rather than a bad flag.
+        raise ValueError(f"candidates ({candidates}) must be at least top_k ({top_k})")
+    dense = _dense(
+        query,
+        top_k=candidates,
+        filters=filters,
+        collection=collection,
+        client=client,
+        embedder=embedder,
+    )
+    lexical = _lexical(query, top_k=candidates, filters=filters, index=index)
+    return rrf([dense, lexical], k=rrf_k, top_k=top_k)
+
+
 Retrieve = Callable[..., list[ScoredChunk]]
 # Mirrors chunk.STRATEGIES: the registry is how this project compares N variants
 # and promotes a winner. Step 17's reranker registers a key here.
-RETRIEVERS: dict[str, Retrieve] = {"dense": _dense, "lexical": _lexical}
+RETRIEVERS: dict[str, Retrieve] = {"dense": _dense, "lexical": _lexical, "hybrid": _hybrid}
 
 
 def search(
@@ -157,6 +223,8 @@ def search(
     *,
     top_k: int = 5,
     mode: str | None = None,
+    candidates: int | None = None,
+    rrf_k: int | None = None,
     filters: Filters | None = None,
     collection: str | None = None,
     settings: Settings | None = None,
@@ -177,6 +245,10 @@ def search(
     ``filters`` restricts the search to payload values: ``{"doc_type": "tutorial"}``
     or ``{"doc_type": ["tutorial", "advanced"]}``. Only fields in
     ``store.INDEXED_FIELDS`` are accepted, so a filter is always an index lookup.
+
+    ``candidates`` is the per-branch depth hybrid mode retrieves before fusing,
+    and ``rrf_k`` the fusion constant. Both default to their settings and are
+    ignored by the single-branch modes.
 
     ``collection`` overrides the configured one. Step 12 indexes one collection
     per chunking strategy so a comparison stays reproducible: recreating a single
@@ -204,6 +276,8 @@ def search(
     return RETRIEVERS[mode](
         query,
         top_k=top_k,
+        candidates=candidates or settings.retrieval_candidates,
+        rrf_k=rrf_k or settings.rrf_k,
         filters=filters,
         collection=collection,
         client=client,

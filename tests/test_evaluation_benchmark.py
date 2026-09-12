@@ -166,15 +166,15 @@ def test_the_summary_keeps_one_row_per_matching_label() -> None:
     ]
     rows = summarise(history, "chunk-*")
     assert [row[0] for row in rows] == ["chunk-fixed-1000-200", "chunk-sentence-1000-200"]
-    assert [row[1] for row in rows] == ["fixed", "sentence"]
-    assert rows[0][4] == "0.500"
+    assert [row[2] for row in rows] == ["fixed", "sentence"]
+    assert rows[0][5] == "0.500"
 
 
 def test_the_summary_keeps_only_the_last_run_of_a_repeated_label() -> None:
     history = [history_row("chunk-fixed-1000-200", 0.5), history_row("chunk-fixed-1000-200", 0.9)]
     rows = summarise(history, "chunk-*")
     assert len(rows) == 1
-    assert rows[0][4] == "0.900"
+    assert rows[0][5] == "0.900"
 
 
 def test_a_glob_matching_nothing_summarises_nothing() -> None:
