@@ -179,3 +179,50 @@ def test_the_summary_keeps_only_the_last_run_of_a_repeated_label() -> None:
 
 def test_a_glob_matching_nothing_summarises_nothing() -> None:
     assert summarise([history_row("dense-baseline", 0.713)], "chunk-*") == []
+
+
+def test_single_facet_questions_are_bucketed_by_doc_type() -> None:
+    questions = [
+        EvalQuestion(
+            question_id="q1",
+            question="how do dependencies work",
+            category="conceptual",
+            relevant_document_ids=["fastapi:tutorial/dependencies"],
+        ),
+        EvalQuestion(
+            question_id="q2",
+            question="how do i deploy",
+            category="conceptual",
+            relevant_document_ids=["fastapi:deployment/docker"],
+        ),
+    ]
+    result = run_benchmark(questions, perfect, label="t", ks=(1,))
+    assert sorted(result.per_doc_type) == ["deployment", "tutorial"]
+    assert result.per_doc_type["tutorial"]["questions"] == 1.0
+
+
+def test_a_multi_facet_question_is_in_no_bucket() -> None:
+    questions = [
+        EvalQuestion(
+            question_id="q1",
+            question="how do dependencies work in production",
+            category="multi_doc",
+            relevant_document_ids=["fastapi:tutorial/dependencies", "fastapi:deployment/docker"],
+        )
+    ]
+    result = run_benchmark(questions, perfect, label="t", ks=(1,))
+    assert result.per_doc_type == {}
+    assert result.answerable == 1
+
+
+def test_an_unanswerable_question_is_in_no_bucket() -> None:
+    questions = [
+        EvalQuestion(
+            question_id="q1",
+            question="what is the capital of france",
+            category="unanswerable",
+            relevant_document_ids=[],
+        )
+    ]
+    result = run_benchmark(questions, perfect, label="t", ks=(1,))
+    assert result.per_doc_type == {}

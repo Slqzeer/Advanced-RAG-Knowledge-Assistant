@@ -83,6 +83,23 @@ def print_result(result: BenchmarkResult) -> None:
             ],
         )
     )
+    # Only the single-facet questions are in here; `n` is printed so a bucket of
+    # one is read as a bucket of one.
+    if result.per_doc_type:
+        print()
+        print(
+            table(
+                ["doc_type", "n", *CATEGORY_COLUMNS],
+                [
+                    [
+                        facet,
+                        f"{scores['questions']:.0f}",
+                        *[f"{scores[column]:.3f}" for column in CATEGORY_COLUMNS],
+                    ]
+                    for facet, scores in result.per_doc_type.items()
+                ],
+            )
+        )
     for failure in result.failures:
         print(f"\n!! {failure['question_id']}: {failure['error']}")
 

@@ -24,6 +24,7 @@ from app.evaluation.metrics import (
     recall_at_k,
     reciprocal_rank,
 )
+from app.ingestion.loader import doc_type_of
 from app.models.chunks import ScoredChunk
 
 Retriever = Callable[[str], list[ScoredChunk]]
@@ -32,6 +33,19 @@ Retriever = Callable[[str], list[ScoredChunk]]
 # usually unrelated. Recorded now, acted on in step 22 — and every per-question
 # top score is kept in the history so the threshold can be retuned without a rerun.
 DEFAULT_ABSTENTION_THRESHOLD = 0.35
+
+
+def question_doc_type(question: EvalQuestion) -> str | None:
+    """The single facet a question's ground truth lives in, or ``None``.
+
+    ``None`` for the 22 of 38 answerable questions whose relevant documents span
+    two directories: they belong in no bucket, and putting them in both is how a
+    per-facet table starts reporting numbers that cannot be reproduced.
+    """
+    facets = {
+        doc_type_of(document_id.partition(":")[2]) for document_id in question.relevant_document_ids
+    }
+    return facets.pop() if len(facets) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -52,6 +66,7 @@ class BenchmarkResult:
     latency_p50_ms: float = 0.0
     latency_p95_ms: float = 0.0
     failures: list[dict[str, str]] = field(default_factory=list)
+    per_doc_type: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -187,6 +202,7 @@ def run_benchmark(
             unanswerable_rows.append(row)
         else:
             row.update(_score(documents, set(question.relevant_document_ids), ks))
+            row["doc_type"] = question_doc_type(question)
             answerable_rows.append(row)
 
     metric_keys = list(_score(["x"], {"x"}, ks))
@@ -206,6 +222,13 @@ def run_benchmark(
         if (rows := [row for row in answerable_rows if row["category"] == category])
     }
 
+    facets = sorted({row["doc_type"] for row in answerable_rows if row["doc_type"]})
+    per_doc_type = {
+        facet: {"questions": float(len(rows)), **_mean_rows(rows, metric_keys)}
+        for facet in facets
+        if (rows := [row for row in answerable_rows if row["doc_type"] == facet])
+    }
+
     return BenchmarkResult(
         label=label,
         timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
@@ -221,4 +244,5 @@ def run_benchmark(
         latency_p50_ms=_percentile(latencies, 0.50),
         latency_p95_ms=_percentile(latencies, 0.95),
         failures=failures,
+        per_doc_type=per_doc_type,
     )
