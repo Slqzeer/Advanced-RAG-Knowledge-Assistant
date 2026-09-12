@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 200
     top_k: int = 5
+    # Step 14-16 compared three. The default changes only if the sweep meets the
+    # rule in the step 14-16 design doc: dense | lexical | hybrid.
+    retrieval_mode: str = "dense"
     corpus_dir: Path = Path("data/raw")
 
 

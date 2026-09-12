@@ -7,10 +7,11 @@ from qdrant_client import QdrantClient
 
 from app.core.config import Settings, get_settings
 from app.models.chunks import Chunk, ScoredChunk
+from app.retrieval.bm25 import BM25Index
 from app.retrieval.search import parse_filters, search
 from app.retrieval.store import chunk_from_payload, ensure_collection, get_client, upsert_chunks
 
-SETTINGS = Settings(qdrant_collection="chunks", openai_api_key=None)
+SETTINGS = Settings(qdrant_collection="chunks", openai_api_key=None, retrieval_mode="dense")
 
 
 def make_payload(index: int, **overrides: Any) -> dict[str, Any]:
@@ -296,3 +297,72 @@ def test_the_payload_mapper_is_the_one_from_the_store() -> None:
     """One mapper, or search results quietly lose a field the indexer writes."""
     chunk = real_chunk(0, "text")
     assert chunk_from_payload(chunk.to_payload()) == chunk
+
+
+# --- retrieval modes (step 14) --------------------------------------------
+
+
+def bm25_index(*texts: str) -> BM25Index:
+    return BM25Index(
+        [Chunk.model_validate(make_payload(i, text=text)) for i, text in enumerate(texts)]
+    )
+
+
+def test_the_default_mode_is_dense_and_queries_qdrant() -> None:
+    client = FakeClient()
+    run(client=client, top_k=3)
+    assert len(client.calls) == 1
+
+
+def test_lexical_mode_does_not_touch_qdrant_or_the_embedder() -> None:
+    """The point of a lexical branch: no vector, no API call, no server round trip."""
+    client, embedder = FakeClient(), FakeEmbedder()
+    run(
+        "HTTPException 422",
+        mode="lexical",
+        client=client,
+        embedder=embedder,
+        index=bm25_index("a 422 response", "unrelated prose"),
+        top_k=1,
+    )
+    assert client.calls == []
+    assert embedder.calls == []
+
+
+def test_lexical_mode_retrieves_an_exact_token_dense_search_misses() -> None:
+    [top] = run(
+        "HTTPException 422",
+        mode="lexical",
+        index=bm25_index("returns a 422 response", "generic error handling prose"),
+        top_k=1,
+    )
+    assert "422" in top.chunk.text
+
+
+def test_lexical_mode_ranks_from_one() -> None:
+    results = run(
+        "error",
+        mode="lexical",
+        index=bm25_index("error one", "error two", "error three"),
+        top_k=3,
+    )
+    assert [scored.rank for scored in results] == [1, 2, 3]
+
+
+def test_an_unknown_mode_is_rejected_by_name() -> None:
+    with pytest.raises(ValueError, match="sparse"):
+        run(mode="sparse")
+
+
+def test_the_mode_falls_back_to_the_settings() -> None:
+    """A benchmark row that says `lexical` must not have run dense retrieval."""
+    client, embedder = FakeClient(), FakeEmbedder()
+    run(
+        "error",
+        settings=Settings(qdrant_collection="chunks", retrieval_mode="lexical"),
+        client=client,
+        embedder=embedder,
+        index=bm25_index("an error occurred"),
+        top_k=1,
+    )
+    assert client.calls == []

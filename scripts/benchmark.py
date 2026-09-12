@@ -3,6 +3,7 @@
     uv run python scripts/benchmark.py --label "dense-baseline"
     uv run python scripts/benchmark.py --label "tutorial" --filter doc_type=tutorial
     uv run python scripts/benchmark.py --label "oracle" --oracle-filter
+    uv run python scripts/benchmark.py --label "bm25-sentence" --mode lexical
     uv run python scripts/benchmark.py --label "hybrid" --compare "dense-baseline"
     uv run python scripts/benchmark.py --summary "chunk-*"
 
@@ -30,7 +31,7 @@ from app.evaluation.benchmark import (  # noqa: E402
 )
 from app.evaluation.dataset import load_dataset  # noqa: E402
 from app.models.chunks import ScoredChunk  # noqa: E402
-from app.retrieval.search import parse_filters, search  # noqa: E402
+from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
 HISTORY = Path("data/eval/results.jsonl")
@@ -163,6 +164,7 @@ def main() -> int:
         "facet routing, not a retriever you can ship",
     )
     parser.add_argument("--collection", help="default: QDRANT_COLLECTION")
+    parser.add_argument("--mode", choices=sorted(RETRIEVERS), help="default: RETRIEVAL_MODE")
     # Recorded, not used: the collection cannot tell us how it was chunked, and a
     # summary row that says "recursive" for every strategy is worse than no row.
     parser.add_argument("--strategy", help="how --collection was chunked; recorded only")
@@ -207,6 +209,7 @@ def main() -> int:
         return search(
             text,
             top_k=args.top_k,
+            mode=args.mode,
             filters=filters or None,
             collection=collection,
             settings=settings,
@@ -219,6 +222,7 @@ def main() -> int:
         label=args.label,
         config={
             "top_k": args.top_k,
+            "mode": args.mode or settings.retrieval_mode,
             "filters": base_filters or None,
             "oracle_filter": args.oracle_filter,
             "dataset": str(args.dataset),

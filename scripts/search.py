@@ -1,6 +1,7 @@
 """Look at what the index actually returns.
 
-    uv run python scripts/search.py "question" [--top-k 5] [--filter doc_type=tutorial]
+    uv run python scripts/search.py "question" [--top-k 5] [--mode lexical]
+                                              [--filter doc_type=tutorial]
 
 Eyeballing results is not a substitute for step 11's metrics, but it is how you
 notice that a keyword query retrieves nothing useful before you build four
@@ -14,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.retrieval.search import parse_filters, search  # noqa: E402
+from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 
 PREVIEW = 200
 
@@ -30,12 +31,15 @@ def main() -> int:
         metavar="KEY=VALUE",
         help="repeatable; e.g. --filter doc_type=tutorial --filter doc_type=tutorial,advanced",
     )
+    parser.add_argument("--mode", choices=sorted(RETRIEVERS), help="default: RETRIEVAL_MODE")
     args = parser.parse_args()
     # The corpus is full of emoji and the Windows console defaults to cp1252.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
     started = time.perf_counter()
-    results = search(args.query, top_k=args.top_k, filters=parse_filters(args.filter))
+    results = search(
+        args.query, top_k=args.top_k, mode=args.mode, filters=parse_filters(args.filter)
+    )
     elapsed = time.perf_counter() - started
 
     print(f'"{args.query}"  ->  {len(results)} results in {elapsed * 1000:.0f} ms\n')

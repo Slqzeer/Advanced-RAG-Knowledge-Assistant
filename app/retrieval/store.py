@@ -50,9 +50,12 @@ def ensure_collection(
             return
         client.delete_collection(name)
 
-    # ponytail: one unnamed dense vector. Step 14 adds BM25 and will want a named
-    # sparse vector alongside, which means recreating the collection — fine, the
-    # step 05 cache makes re-indexing free.
+    # ponytail: one unnamed dense vector, and it stays that way. Step 14 put BM25
+    # in-process instead of in a named sparse vector: Qdrant's IDF modifier
+    # supplies only the IDF factor, so k1 and b would still live in Python and
+    # the formula would be split across two systems. See the step 14-16 design
+    # doc; a named sparse vector is the upgrade path if the corpus outgrows an
+    # in-process index.
     client.create_collection(
         collection_name=name,
         # Cosine because that is what the embedding model is trained for. Dot
