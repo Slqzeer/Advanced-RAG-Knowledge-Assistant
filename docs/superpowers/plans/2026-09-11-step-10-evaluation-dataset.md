@@ -51,7 +51,7 @@ Without the `exact` and `unanswerable` buckets, steps 14 and 22 have nothing to 
 
 ### Task 1: The schema and loader
 
-- [ ] **Step 1: Failing tests**, against small fixture files with deliberately broken rows.
+- [x] **Step 1: Failing tests**, against small fixture files with deliberately broken rows.
 
 1. A valid 3-row file loads into 3 `EvalQuestion` objects.
 2. A malformed JSON line raises an error **naming the line number**. Debugging "invalid JSON" in a 50-line file without a line number is a waste of an afternoon.
@@ -63,7 +63,7 @@ Without the `exact` and `unanswerable` buckets, steps 14 and 22 have nothing to 
 8. Blank lines and `#` comment lines in the file are skipped.
 9. `load_dataset(..., categories=["exact"])` filters.
 
-- [ ] **Step 2: Write `app/evaluation/dataset.py`**
+- [x] **Step 2: Write `app/evaluation/dataset.py`**
 
 ```python
 Category = Literal["conceptual", "exact", "code", "multi_doc", "unanswerable"]
@@ -83,37 +83,37 @@ def validate_dataset(questions: Sequence[EvalQuestion], known_document_ids: set[
 
 `validate_dataset` is separate from `load_dataset` because it needs the corpus, which the unit tests do not have. It returns a list of problems rather than raising, so the CLI can print all of them at once instead of one per run.
 
-- [ ] **Step 3: Green.** Commit: `feat(evaluation): add the evaluation dataset loader`.
+- [x] **Step 3: Green.** Commit: `feat(evaluation): add the evaluation dataset loader`.
 
 ### Task 2: The corpus cross-check
 
-- [ ] **Step 1: Write `scripts/validate_dataset.py`** — load the corpus document ids (from Qdrant, or by loading and cleaning the corpus), load the dataset, run `validate_dataset`, print every problem, exit non-zero if any.
+- [x] **Step 1: Write `scripts/validate_dataset.py`** — load the corpus document ids (from Qdrant, or by loading and cleaning the corpus), load the dataset, run `validate_dataset`, print every problem, exit non-zero if any.
 
 Must catch: a `relevant_document_id` that does not exist in the corpus (a typo, or a document dropped by step 03's stub filter — both happen, and both make a question permanently unanswerable while looking fine).
 
-- [ ] **Step 2: Print a distribution summary** — count per category, mean relevant documents per question, held-out count. You will want this number in the README.
+- [x] **Step 2: Print a distribution summary** — count per category, mean relevant documents per question, held-out count. You will want this number in the README.
 
-- [ ] **Step 3: Commit.** `feat(evaluation): add a dataset validation script`.
+- [x] **Step 3: Commit.** `feat(evaluation): add a dataset validation script`.
 
 ### Task 3: Write the questions
 
 This is the long task. It is manual on purpose.
 
-- [ ] **Step 1: Write `data/eval/README.md`** first — the rules above, in a page. Labelling consistency across two sittings depends on it existing before you start.
+- [x] **Step 1: Write `data/eval/README.md`** first — the rules above, in a page. Labelling consistency across two sittings depends on it existing before you start.
 
-- [ ] **Step 2: Label `conceptual` (≥10) and `code` (≥8)**
+- [x] **Step 2: Label `conceptual` (≥10) and `code` (≥8)**
 
 Workflow per question: pick a document, read it, write the question as a user would ask it, then search the corpus yourself for any *other* document that also answers it and add those ids too. Missing a genuinely relevant document penalises a retriever for being right, which is how a good change gets rejected by a bad yardstick.
 
-- [ ] **Step 3: Label `exact` (≥8)** — error codes, status codes, decorator and class names, CLI flags, exception types. Use the identifier as the user would type it, without surrounding prose. These are the questions dense search is expected to fail; that expected failure is the evidence for step 14.
+- [x] **Step 3: Label `exact` (≥8)** — error codes, status codes, decorator and class names, CLI flags, exception types. Use the identifier as the user would type it, without surrounding prose. These are the questions dense search is expected to fail; that expected failure is the evidence for step 14.
 
-- [ ] **Step 4: Label `multi_doc` (≥8)** — questions genuinely spanning documents, each with 2-4 relevant ids.
+- [x] **Step 4: Label `multi_doc` (≥8)** — questions genuinely spanning documents, each with 2-4 relevant ids.
 
-- [ ] **Step 5: Label `unanswerable` (≥8)** — plausible technical questions the corpus does not cover, with `relevant_document_ids: []`. Make them *near* the corpus (another web framework, a neighbouring tool) rather than absurd; "how do I bake bread" tests nothing.
+- [x] **Step 5: Label `unanswerable` (≥8)** — plausible technical questions the corpus does not cover, with `relevant_document_ids: []`. Make them *near* the corpus (another web framework, a neighbouring tool) rather than absurd; "how do I bake bread" tests nothing.
 
-- [ ] **Step 6: Mark ~5 questions `held_out: true`**, spread across categories.
+- [x] **Step 6: Mark ~5 questions `held_out: true`**, spread across categories.
 
-- [ ] **Step 7: Validate and fix**
+- [x] **Step 7: Validate and fix**
 
 ```powershell
 uv run python scripts/validate_dataset.py
@@ -121,14 +121,14 @@ uv run python scripts/validate_dataset.py
 
 Iterate to zero problems.
 
-- [ ] **Step 8: Spot-check your own labels.** Take 5 questions, run step 07's search CLI, and read the top 10 results. If a result is clearly relevant and not in your label list, your labels are wrong — fix them now, before any number depends on them. Expect to find two or three.
+- [x] **Step 8: Spot-check your own labels.** Take 5 questions, run step 07's search CLI, and read the top 10 results. If a result is clearly relevant and not in your label list, your labels are wrong — fix them now, before any number depends on them. Expect to find two or three.
 
-- [ ] **Step 9: Commit.** `feat(evaluation): add the labelled retrieval evaluation set`.
+- [x] **Step 9: Commit.** `feat(evaluation): add the labelled retrieval evaluation set`.
 
 ### Task 4: Documentation
 
-- [ ] **Step 1: Update `README.md`** — a short "Évaluation" section giving the question count, the category distribution, the document-level labelling decision and its rationale. That rationale is exactly the kind of reasoning the brief says should be visible in this project.
-- [ ] **Step 2: Commit.** `docs: document the evaluation dataset`.
+- [x] **Step 1: Update `README.md`** — a short "Évaluation" section giving the question count, the category distribution, the document-level labelling decision and its rationale. That rationale is exactly the kind of reasoning the brief says should be visible in this project.
+- [x] **Step 2: Commit.** `docs: document the evaluation dataset`.
 
 ## Verification
 

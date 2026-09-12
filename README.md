@@ -12,6 +12,7 @@
 - [Recherche vectorielle](#recherche-vectorielle)
 - [Génération de réponses](#génération-de-réponses)
 - [Citations](#citations)
+- [Jeu d'évaluation](#jeu-dévaluation)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -31,7 +32,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 10 terminée, étape 09 — Citations (`v0.3`).** La boucle est fermée et désormais **vérifiable** : une question entre, une réponse fondée sur le corpus sort, et chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni. Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, et **sourcé pour de bon**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étape 10 terminée — Jeu d'évaluation (`v0.4`).** La boucle est fermée, **vérifiable**, et désormais **mesurable** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et 50 questions annotées à la main attendent les métriques de l'étape 11. Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, et **sourcé pour de bon**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -48,7 +49,8 @@ Fonctionnalités disponibles :
 - indexation dans Qdrant via `app.retrieval.store` et `scripts/index_corpus.py` : 1 607 points, distance cosinus, index de payload sur `source`, `document_id` et `language` ;
 - recherche par similarité via `app.retrieval.search` et `scripts/search.py` : `search()` rend des `ScoredChunk` classés à partir du rang 1, 119 ms sur requête déjà vectorisée ;
 - génération de réponses via `app.generation` et `scripts/ask.py` : contexte numéroté, appel au modèle à `temperature=0`, objet `Answer` avec sources, statistiques, tokens et latence ; 1,5 à 3,7 s de bout en bout, 851 à 1 021 tokens par question ;
-- validation des citations via `app.generation.citations` : chaque `[n]` est analysé puis confronté au contexte fourni, les sources rendues sont le sous-ensemble réellement cité, renuméroté de 1 dans le texte **et** dans la liste.
+- validation des citations via `app.generation.citations` : chaque `[n]` est analysé puis confronté au contexte fourni, les sources rendues sont le sous-ensemble réellement cité, renuméroté de 1 dans le texte **et** dans la liste ;
+- jeu d'évaluation annoté via `app.evaluation.dataset` et `scripts/validate_dataset.py` : 50 questions, 5 catégories, vérité terrain au niveau document, recoupée avec le corpus nettoyé.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
@@ -319,6 +321,54 @@ la cible de la recherche hybride de l'étape 14.
 envoyé, donc la numérotation d'origine ; la réponse, elle, est renumérotée. Pour
 auditer un `[n]`, il faut passer par le titre de la source, pas par son numéro.
 
+## Jeu d'évaluation
+
+Tout ce qui suit dans ce projet est une comparaison, et une comparaison a besoin
+d'une règle graduée. [`data/eval/questions.jsonl`](data/eval/questions.jsonl) est
+cette règle : **50 questions écrites à la main à partir du corpus**, annotées avec
+les documents qui y répondent. Les règles d'annotation sont dans
+[`data/eval/README.md`](data/eval/README.md) — un jeu annoté sans règles écrites
+dérive dès la deuxième séance.
+
+| Catégorie | Questions | Ce qu'elle sonde |
+|---|---:|---|
+| `conceptual` | 11 | terrain de jeu de la recherche dense |
+| `exact` | 11 | identifiants et codes littéraux — la cible de l'étape 14 |
+| `code` | 11 | récupération de blocs de code |
+| `multi_doc` | 9 | réponses réparties sur 2 à 4 documents |
+| `unanswerable` | 8 | comportement de refus — étape 22 |
+
+2,17 documents pertinents en moyenne par question répondable ; 5 questions
+réservées, réparties sur les catégories.
+
+**La vérité terrain est au niveau document, pas au niveau chunk.** C'est la
+décision qui porte toute l'étape. Les `chunk_id` changent à chaque modification de
+`chunk_size` : une annotation au niveau chunk devrait être refaite pour chacune des
+cinq stratégies comparées à l'étape 12. Personne ne réannote cinquante questions
+cinq fois, donc la comparaison n'aurait jamais lieu. Les `document_id` survivent au
+re-découpage. Le coût est assumé : on ne distingue pas « bonne page, mauvaise
+section » de « bonne section », et le champ `relevant_sections` attend les rares
+questions où cette distinction changera une décision.
+
+**Le nombre de documents pertinents varie volontairement.** Si chaque question
+n'avait qu'une seule bonne réponse, le Recall@K se confondrait avec le Hit Rate et
+deux des cinq métriques de l'étape 11 seraient redondantes.
+
+**Deux annotations ont été corrigées par la relecture, pas par le validateur.** En
+lisant le top 10 réel de cinq questions : `jsonable_encoder` oubliait
+`advanced/custom-response`, et la question sur l'authentification listait
+`tutorial/dependencies/index`, qui explique l'injection de dépendances et non
+l'authentification. Les deux erreurs auraient pénalisé un système qui avait raison.
+
+```powershell
+uv run python scripts/validate_dataset.py
+```
+
+Le script recoupe chaque identifiant annoté avec les 147 documents nettoyés. Il a
+servi tout de suite : `reference/encoders` est écarté par le filtre de prose de
+l'étape 03, donc il ne peut pas être annoté comme source de `jsonable_encoder`,
+même si le fichier existe dans le corpus brut.
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -449,6 +499,9 @@ uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans
 # Échouer sur une citation inventée au lieu de l'avertir (campagnes d'évaluation)
 uv run python scripts/ask.py "What does Depends() with yield do differently?" --strict
 
+# Vérifier le jeu d'évaluation contre le corpus
+uv run python scripts/validate_dataset.py
+
 # Tests d'intégration Qdrant (ignorés si le serveur n'est pas joignable)
 uv run pytest -m requires_qdrant
 
@@ -465,12 +518,13 @@ docker compose down
 ├── app/
 │   ├── api/          # future API FastAPI
 │   ├── core/         # configuration partagée
-│   ├── evaluation/   # futures métriques RAG
+│   ├── evaluation/   # jeu d'évaluation annoté, futures métriques RAG
 │   ├── generation/   # contexte, appel au modèle, citations, orchestration
 │   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
 │   └── retrieval/    # indexation Qdrant et recherche par similarité
 ├── data/
+│   ├── eval/         # jeu de questions annoté, versionné
 │   ├── raw/          # sources locales non versionnées
 │   └── processed/    # données transformées non versionnées
 ├── docker/           # futurs fichiers de conteneurisation
