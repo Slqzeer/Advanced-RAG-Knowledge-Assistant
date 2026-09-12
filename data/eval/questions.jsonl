@@ -1,0 +1,62 @@
+# Jeu d'evaluation de la recherche - regles d'annotation : data/eval/README.md
+# Verite terrain au niveau document. Verifier avec scripts/validate_dataset.py.
+
+# --- conceptual : le terrain de jeu de la recherche dense -------------------
+{"question_id": "q001", "question": "Why would I make a route function async instead of a normal one?", "category": "conceptual", "relevant_document_ids": ["fastapi:async"]}
+{"question_id": "q002", "question": "What does the framework actually do with the type hints I put on my arguments?", "category": "conceptual", "relevant_document_ids": ["fastapi:python-types", "fastapi:features"]}
+{"question_id": "q003", "question": "How does an incoming URL end up in one of my functions?", "category": "conceptual", "relevant_document_ids": ["fastapi:tutorial/first-steps", "fastapi:tutorial/path-params"]}
+{"question_id": "q004", "question": "What problem is dependency injection actually solving here?", "category": "conceptual", "relevant_document_ids": ["fastapi:tutorial/dependencies/index"], "held_out": true}
+{"question_id": "q005", "question": "Is it really faster than the other Python frameworks, and how would I know?", "category": "conceptual", "relevant_document_ids": ["fastapi:benchmarks", "fastapi:alternatives"]}
+{"question_id": "q006", "question": "At what point is it worth splitting one app file into several modules?", "category": "conceptual", "relevant_document_ids": ["fastapi:tutorial/bigger-applications"]}
+{"question_id": "q007", "question": "What changes for the caller when I declare what my endpoint returns?", "category": "conceptual", "relevant_document_ids": ["fastapi:tutorial/response-model", "fastapi:how-to/separate-openapi-schemas"]}
+{"question_id": "q008", "question": "Why should each project get its own isolated Python install instead of one global one?", "category": "conceptual", "relevant_document_ids": ["fastapi:virtual-environments"]}
+{"question_id": "q009", "question": "What is OpenAPI and why does the framework revolve around it?", "category": "conceptual", "relevant_document_ids": ["fastapi:features", "fastapi:tutorial/first-steps"]}
+{"question_id": "q010", "question": "Where does the clickable documentation page come from, and can I change it?", "category": "conceptual", "relevant_document_ids": ["fastapi:tutorial/metadata", "fastapi:how-to/configure-swagger-ui", "fastapi:tutorial/first-steps"]}
+{"question_id": "q011", "question": "What do I need to think about before this goes in front of real users?", "category": "conceptual", "relevant_document_ids": ["fastapi:deployment/concepts", "fastapi:deployment/index"]}
+
+# --- code : la question se repond par un bloc de code -----------------------
+{"question_id": "q012", "question": "How do I give a query parameter a default value?", "category": "code", "relevant_document_ids": ["fastapi:tutorial/query-params", "fastapi:tutorial/query-params-str-validations"]}
+{"question_id": "q013", "question": "How do I let someone upload a file to my API?", "category": "code", "relevant_document_ids": ["fastapi:tutorial/request-files", "fastapi:reference/uploadfile"]}
+{"question_id": "q014", "question": "How do I read a custom header the client sent?", "category": "code", "relevant_document_ids": ["fastapi:tutorial/header-params", "fastapi:tutorial/header-param-models"]}
+{"question_id": "q015", "question": "How do I run a slow job after the response has already gone out?", "category": "code", "relevant_document_ids": ["fastapi:tutorial/background-tasks", "fastapi:reference/background"], "held_out": true}
+{"question_id": "q016", "question": "How do I set a cookie on the response I return?", "category": "code", "relevant_document_ids": ["fastapi:advanced/response-cookies"]}
+{"question_id": "q017", "question": "How do I serve a whole folder of files as-is?", "category": "code", "relevant_document_ids": ["fastapi:tutorial/static-files", "fastapi:reference/staticfiles"]}
+{"question_id": "q018", "question": "How do I write a test that calls my own endpoints?", "category": "code", "relevant_document_ids": ["fastapi:tutorial/testing", "fastapi:reference/testclient"]}
+{"question_id": "q019", "question": "My frontend on another domain gets blocked by the browser, how do I allow it?", "category": "code", "relevant_document_ids": ["fastapi:tutorial/cors"]}
+{"question_id": "q020", "question": "How do I read and write rows in a SQL database from an endpoint?", "category": "code", "relevant_document_ids": ["fastapi:tutorial/sql-databases"]}
+{"question_id": "q021", "question": "How do I return an HTML page instead of JSON?", "category": "code", "relevant_document_ids": ["fastapi:advanced/custom-response", "fastapi:advanced/templates"]}
+{"question_id": "q022", "question": "How do I send the body out in pieces instead of all at once?", "category": "code", "relevant_document_ids": ["fastapi:advanced/stream-data", "fastapi:tutorial/stream-json-lines"]}
+
+# --- exact : identifiants tapes tels quels, le cas BM25 (etape 14) ----------
+{"question_id": "q023", "question": "HTTPException", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/handling-errors", "fastapi:reference/exceptions"]}
+{"question_id": "q024", "question": "RequestValidationError", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/handling-errors", "fastapi:how-to/custom-request-and-route"]}
+{"question_id": "q025", "question": "jsonable_encoder", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/encoder", "fastapi:tutorial/body-updates", "fastapi:advanced/response-directly", "fastapi:advanced/custom-response"], "notes": "reference/encoders est ecarte par le filtre de prose de l'etape 03"}
+{"question_id": "q026", "question": "response_model_exclude_unset", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/response-model"]}
+{"question_id": "q027", "question": "OAuth2PasswordRequestForm", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/security/simple-oauth2", "fastapi:advanced/security/oauth2-scopes", "fastapi:reference/security/index"]}
+{"question_id": "q028", "question": "root_path", "category": "exact", "relevant_document_ids": ["fastapi:advanced/behind-a-proxy", "fastapi:advanced/sub-applications"], "held_out": true}
+{"question_id": "q029", "question": "UploadFile", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/request-files", "fastapi:reference/uploadfile", "fastapi:tutorial/request-forms-and-files"]}
+{"question_id": "q030", "question": "fastapi dev", "category": "exact", "relevant_document_ids": ["fastapi:fastapi-cli"]}
+{"question_id": "q031", "question": "fastapi.status", "category": "exact", "relevant_document_ids": ["fastapi:reference/status", "fastapi:tutorial/response-status-code"]}
+{"question_id": "q032", "question": "add_middleware", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/middleware", "fastapi:advanced/middleware", "fastapi:tutorial/cors"]}
+{"question_id": "q033", "question": "Depends", "category": "exact", "relevant_document_ids": ["fastapi:tutorial/dependencies/index", "fastapi:reference/dependencies"]}
+
+# --- multi_doc : la reponse tient dans 2 a 4 documents ----------------------
+{"question_id": "q034", "question": "How do I make sure only a signed-in user can reach this endpoint?", "category": "multi_doc", "relevant_document_ids": ["fastapi:tutorial/security/first-steps", "fastapi:tutorial/security/get-current-user", "fastapi:tutorial/security/simple-oauth2", "fastapi:tutorial/security/oauth2-jwt"], "notes": "dependencies/index retire apres relecture : il explique l'injection, pas l'authentification"}
+{"question_id": "q035", "question": "How do I test an endpoint that talks to the database without touching the real one?", "category": "multi_doc", "relevant_document_ids": ["fastapi:tutorial/testing", "fastapi:advanced/testing-dependencies", "fastapi:how-to/testing-database"]}
+{"question_id": "q036", "question": "It works locally but the generated links are wrong once it sits behind a proxy with TLS, why?", "category": "multi_doc", "relevant_document_ids": ["fastapi:advanced/behind-a-proxy", "fastapi:deployment/https", "fastapi:deployment/concepts"]}
+{"question_id": "q037", "question": "How do I package this in a container and run several workers?", "category": "multi_doc", "relevant_document_ids": ["fastapi:deployment/docker", "fastapi:deployment/server-workers", "fastapi:deployment/concepts"], "held_out": true}
+{"question_id": "q038", "question": "How do I change the title, the tags and the description that end up in the generated schema?", "category": "multi_doc", "relevant_document_ids": ["fastapi:tutorial/metadata", "fastapi:tutorial/path-operation-configuration", "fastapi:advanced/path-operation-advanced-configuration", "fastapi:how-to/extending-openapi"]}
+{"question_id": "q039", "question": "How do I return a proper error with the right status code when something goes wrong?", "category": "multi_doc", "relevant_document_ids": ["fastapi:tutorial/handling-errors", "fastapi:tutorial/response-status-code", "fastapi:advanced/additional-status-codes"]}
+{"question_id": "q040", "question": "How do I make sure a resource is released once the request is finished?", "category": "multi_doc", "relevant_document_ids": ["fastapi:tutorial/dependencies/dependencies-with-yield", "fastapi:advanced/advanced-dependencies", "fastapi:tutorial/sql-databases"]}
+{"question_id": "q041", "question": "Where should the database URL and the secret key live so they are not in the code?", "category": "multi_doc", "relevant_document_ids": ["fastapi:advanced/settings", "fastapi:environment-variables"]}
+{"question_id": "q042", "question": "How do I keep a connection open both ways, and how do I test it?", "category": "multi_doc", "relevant_document_ids": ["fastapi:advanced/websockets", "fastapi:advanced/testing-websockets", "fastapi:reference/websockets"]}
+
+# --- unanswerable : proche du corpus, mais absent (etape 22) ----------------
+{"question_id": "q043", "question": "How do I add rate limiting so one client cannot hammer the API?", "category": "unanswerable", "relevant_document_ids": [], "notes": "cite seulement dans release-notes, jamais explique"}
+{"question_id": "q044", "question": "How do I write an Alembic migration to add a column?", "category": "unanswerable", "relevant_document_ids": [], "notes": "sql-databases mentionne Alembic en passant sans rien montrer"}
+{"question_id": "q045", "question": "How do I register a Flask blueprint?", "category": "unanswerable", "relevant_document_ids": [], "notes": "Flask n'apparait que comme alternative comparee"}
+{"question_id": "q046", "question": "How do I send unhandled exceptions to Sentry?", "category": "unanswerable", "relevant_document_ids": []}
+{"question_id": "q047", "question": "How do I schedule a recurring job with Celery beat?", "category": "unanswerable", "relevant_document_ids": [], "notes": "background-tasks renvoie vers Celery sans expliquer", "held_out": true}
+{"question_id": "q048", "question": "How do I paginate a list endpoint with Django REST Framework?", "category": "unanswerable", "relevant_document_ids": []}
+{"question_id": "q049", "question": "How do I cache responses in Redis?", "category": "unanswerable", "relevant_document_ids": [], "notes": "Redis apparait comme dependance d'exemples, jamais comme sujet"}
+{"question_id": "q050", "question": "How do I connect to MongoDB with Motor?", "category": "unanswerable", "relevant_document_ids": []}
