@@ -15,6 +15,7 @@
 - [Jeu d'évaluation](#jeu-dévaluation)
 - [Évaluation du retrieval](#évaluation-du-retrieval)
 - [Découpage — quatre stratégies comparées](#découpage--quatre-stratégies-comparées)
+- [Filtrage par métadonnées — le plafond du routage par facette](#filtrage-par-métadonnées--le-plafond-du-routage-par-facette)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -34,7 +35,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 12 terminée — Découpage comparé et promu.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étape 13 terminée — Filtrage par métadonnées et plafond mesuré.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -86,7 +87,7 @@ Paramètres de référence — `chunk_size=1000`, `overlap=200`, en **caractère
 
 **La reconstruction est testée.** Concaténer les chunks en retirant les recouvrements redonne le texte source à l'octet près : c'est le test qui attrape la pire régression possible, du contenu perdu en silence.
 
-Chaque `Chunk` porte `document_id`, `source`, `title`, `url`, `language`, `section`, `chunk_index`, `char_start` et `char_end`, plus un `chunk_id` dérivé (`{document_id}#{chunk_index}`). Les métadonnées sont attachées maintenant même si l'étape 13 seule les filtrera : les ajouter plus tard voudrait dire réindexer.
+Chaque `Chunk` porte `document_id`, `source`, `title`, `url`, `doc_type`, `language`, `section`, `chunk_index`, `char_start` et `char_end`, plus un `chunk_id` dérivé (`{document_id}#{chunk_index}`). `doc_type` est **dérivé**, pas mappé : c'est le premier segment du chemin du document dans le corpus (`tutorial/dependencies/index.md` → `tutorial`), ou `root` pour un fichier à la racine. Aucune table de correspondance à maintenir, et une seconde source à l'arborescence différente obtient ses propres facettes sans code supplémentaire. Le champ est requis et sans valeur par défaut : un payload écrit avant l'étape 13 échoue bruyamment à la relecture plutôt que de faire remonter une facette inventée dans une ligne de benchmark.
 
 ## Embeddings
 
@@ -137,7 +138,7 @@ uv run python scripts/index_corpus.py --recreate             # passage complet
 
 **La dimension du vecteur est lue sur le modèle, jamais codée en dur.** Une collection créée à la mauvaise dimension échoue bruyamment à l'upsert, mais seulement après avoir payé la vectorisation complète.
 
-**Les index de payload sur `source`, `document_id` et `language` existent dès maintenant.** Deux lignes, et le filtrage par métadonnées de l'étape 13 devient un changement à la requête plutôt qu'une réindexation. Un filtre sans index fonctionne quand même, mais en balayage.
+**Les index de payload sur `source`, `document_id` et `language` existaient dès l'étape 06.** Le pari a tenu : l'étape 13 n'a eu qu'à y ajouter `doc_type` et le filtrage est resté un changement à la requête. Tout champ filtrable doit figurer dans `INDEXED_FIELDS` — `build_filter()` rejette par son nom une clé qui n'y est pas, parce qu'un `doctype` mal orthographié ne balaye pas seulement la collection entière, il ne correspond à rien et se lit en aval comme « le retrieval est cassé » plutôt que « le drapeau est faux ».
 
 **Le texte complet du chunk vit dans le payload.** Cela coûte du disque et économise un second magasin de données plus la jointure entre les deux.
 
@@ -153,7 +154,7 @@ search(query: str, *, top_k: int = 5, source: str | None = None) -> list[ScoredC
 
 ```powershell
 uv run python scripts/search.py "How does dependency injection work in FastAPI?"
-uv run python scripts/search.py "HTTPException 422" --top-k 10 --source fastapi
+uv run python scripts/search.py "HTTPException 422" --top-k 10 --filter doc_type=tutorial
 ```
 
 **Cette signature est conçue une fois, maintenant, pour tout ce qui suit.** La recherche hybride (étapes 14-16), le reranking (17) et la réécriture de requête (18) vivent tous derrière cet appel. Fixer le type de retour dès maintenant — un chunk, plus un score, plus un rang — transforme huit étapes ultérieures en changements internes plutôt qu'en remaniements de tout le dépôt.
@@ -183,6 +184,7 @@ search() -> build_context() -> complete() -> Answer
 ```powershell
 uv run python scripts/ask.py "How does dependency injection work in FastAPI?"
 uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?" --show-context
+uv run python scripts/ask.py "How does dependency injection work?" --filter doc_type=tutorial,advanced
 ```
 
 Une question réelle, sur les 1 607 chunks indexés :
@@ -681,6 +683,105 @@ réponse — les métriques des étapes 20 et 21. Il y est évalué, pas ici.
 | Annotation de pertinence au niveau chunk | jamais — l'annotation au niveau document est exactement ce qui rend deux découpages comparables |
 | Suppression des collections perdantes | quand l'étape 14 aura besoin de la place |
 
+## Filtrage par métadonnées — le plafond du routage par facette
+
+Chaque chunk porte une facette `doc_type` dérivée de l'arborescence du corpus, indexée
+dans Qdrant au même titre que `source`, `document_id` et `language`. Le paramètre
+`source: str | None` de `search()` a disparu au profit d'un
+`filters: Mapping[str, str | Sequence[str]] | None` générique : un scalaire devient un
+`MatchValue`, une séquence un `MatchAny`, plusieurs clés sont combinées en ET. Les
+étapes 14 à 17 ajouteront leurs facettes sans retoucher six sites d'appel.
+
+Mais le livrable de l'étape n'est pas le filtre, c'est le nombre qu'il produit.
+
+### La question posée, et pourquoi elle se pose maintenant
+
+Un routeur de requête — deviner `doc_type` à partir de la question, puis filtrer — est
+une idée qui revient à chaque projet RAG. Avant d'en construire un à l'étape 18, il
+faut savoir ce qu'il rapporterait **au mieux**. C'est ce que mesure `--oracle-filter` :
+chaque question est filtrée sur la facette de sa propre vérité terrain. C'est un
+tricheur, pas un retriever livrable, et c'est exactement l'intérêt — il donne le
+plafond.
+
+Sur les 38 questions répondables, **16 seulement ont une vérité terrain mono-facette**
+(`tutorial` 8, `root` 5, `advanced` 2, `deployment` 1). Les 22 autres s'étalent sur
+deux répertoires : pour elles, tout filtre mono-facette retire un document pertinent
+**par construction**. L'oracle les laisse donc non filtrées, et un routeur réel qui les
+filtrerait ferait strictement pire que pas de routeur du tout.
+
+### Le résultat
+
+| Métrique | `dense-sentence-doctype` | `dense-sentence-oracle-filter` | Écart |
+|---|---:|---:|---:|
+| Recall@5 | 0,776 | 0,776 | **+0,000** |
+| Recall@10 | 0,785 | 0,785 | **+0,000** |
+| Recall@1 | 0,360 | 0,412 | +0,053 |
+| Precision@5 | 0,321 | 0,321 | +0,000 |
+| Hit Rate@5 | 1,000 | 1,000 | +0,000 |
+| NDCG@5 | 0,713 | 0,740 | +0,028 |
+| MRR | 0,810 | 0,856 | +0,046 |
+| Taux d'abstention | 0,143 | 0,143 | +0,000 |
+| Latence p50 | 65 ms | 63 ms | −2 ms |
+
+Recall@5 par facette, sur la ligne de base réindexée (les `n` sont imprimés parce
+qu'un seau de 1 se lit comme un seau de 1) :
+
+| `doc_type` | n | Recall@5 | Recall@10 | MRR sans filtre | MRR avec oracle |
+|---|---:|---:|---:|---:|---:|
+| `tutorial` | 8 | 0,906 | 0,906 | 0,719 | 0,875 |
+| `root` | 5 | 0,900 | 0,900 | 0,900 | 0,900 |
+| `advanced` | 2 | 0,750 | 0,750 | 1,000 | 1,000 |
+| `deployment` | 1 | 0,500 | 0,500 | 0,500 | 1,000 |
+
+`advanced` et `deployment` sont des seaux de 2 et de 1. Ce ne sont pas des conclusions,
+ce sont des lignes de tableau.
+
+### Ce que les chiffres disent, y compris ce qu'on n'attendait pas
+
+**Un routeur de facette parfait ne rapporte rien en Recall.** +0,000 à K=5 comme à
+K=10. Pas « un petit gain » : zéro, et pas une seule des 38 questions ne voit son
+Recall@5 changer. Le plan avait écrit d'avance la forme attendue — les 16 questions
+mono-facette montent, les 22 autres restent plates, le total bouge peu — et la moitié
+mesurée est plus tranchée que prévu : ce qui monte n'est pas le Recall du tout.
+
+**Tout l'écart agrégé vient de quatre questions réordonnées.** `q003` (0,25 → 0,50),
+`q011`, `q014` et `q020` (0,50 → 1,00) sur le MRR. Le filtre ne va pas chercher un
+document que la recherche dense ratait ; il retire du haut du classement des chunks
+d'autres facettes qui s'intercalaient devant le bon. C'est du reclassement, pas du
+rappel. Or le reclassement est précisément le métier de l'étape 17, qui le fait mieux
+et sans avoir à deviner une facette.
+
+**Le filtre ne coûte pas de latence.** 63 ms contre 65 ms en p50, 92 contre 94 en p95.
+Un filtre sur un champ indexé en mots-clés est une recherche d'index, pas un balayage —
+c'est la garantie que `build_filter()` achète en refusant les clés hors
+`INDEXED_FIELDS`.
+
+**Le taux d'abstention ne bouge pas.** Attendu : les 7 questions sans réponse n'ont pas
+de vérité terrain, donc pas de facette, donc l'oracle ne les filtre pas. La ligne est
+là pour dire que rien n'a bougé par accident.
+
+### La conclusion pour l'étape 18
+
+**Un routeur de facette ne vaut pas la peine d'être construit sur ce corpus.** Le
+plafond est de +0,000 Recall@5 — et ce plafond est atteint par un oracle qui connaît la
+réponse. Un routeur réel devinerait, se tromperait sur une partie des 16, et sur les 22
+questions multi-facettes il serait nuisible par construction : filtrer y retire un
+document pertinent à coup sûr. L'étape 18 (query rewriting) fera donc autre chose de
+son budget, et le gain de reclassement que l'oracle révèle est laissé à l'étape 17.
+
+La facette reste : elle est indexée, filtrable et gratuite à l'usage
+(`--filter doc_type=tutorial`), utile pour explorer le corpus et pour une future
+interface à facettes. Ce qui est écarté, c'est de la **deviner**.
+
+### Écarté volontairement
+
+| Écarté | À ajouter quand |
+|---|---|
+| Inférence de facette côté requête | étape 18, et seulement si un corpus futur déplace le plafond au-dessus de zéro |
+| Filtrage sur `language` | jamais sur ce corpus : une seule valeur, donc rien à mesurer ; le champ reste indexé et inutilisé |
+| Filtrage sur `section` | jamais — des titres en texte libre, des centaines de valeurs distinctes, et aucune annotation à cette granularité ; c'est le reranker de l'étape 17 qui opère sous le document |
+| Une seconde source de corpus | après stabilisation de la pile de retrieval — elle change le vivier et rend non comparables tous les chiffres des étapes 11 à 13 |
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -805,14 +906,18 @@ uv run python scripts/index_corpus.py --strategy semantic --collection chunks_se
 
 # Interroger l'index
 uv run python scripts/search.py "How does dependency injection work in FastAPI?"
-uv run python scripts/search.py "HTTPException 422" --top-k 10 --source fastapi
+uv run python scripts/search.py "HTTPException 422" --top-k 10 --filter doc_type=tutorial
 
 # Poser une question et obtenir une réponse sourcée
 uv run python scripts/ask.py "How does dependency injection work in FastAPI?"
 uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?" --show-context
+uv run python scripts/ask.py "How does dependency injection work?" --filter doc_type=tutorial,advanced
 
 # Échouer sur une citation inventée au lieu de l'avertir (campagnes d'évaluation)
 uv run python scripts/ask.py "What does Depends() with yield do differently?" --strict
+
+# le plafond du routage par facette : chaque question filtrée sur sa facette de référence
+uv run python scripts/benchmark.py --label "oracle" --oracle-filter --no-save
 
 # Vérifier le jeu d'évaluation contre le corpus
 uv run python scripts/validate_dataset.py
@@ -864,7 +969,7 @@ docker compose down
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
 - [x] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking, embeddings, indexation Qdrant et recherche vectorielle (faits), génération de la réponse.
 - [x] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact (faite ; `sentence` gagne, Recall@5 0,776).
-- [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
+- [x] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk (faite ; `doc_type` indexé et filtrable, plafond du routage mesuré à +0,000 de Recall@5).
 - [x] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG (faite, `v0.4`).
 - [ ] **Phase 5 — Recherche hybride** : combiner recherche dense et BM25.
 - [ ] **Phase 6 — Reranking** : optimiser la précision des candidats.
@@ -890,10 +995,12 @@ Une valeur absente signifie que l'expérience n'a pas encore été exécutée. C
 | RAG minimal (`v0.2`) | — | — | — | 1,5 à 3,7 s** | ~0,0003 $ / question** |
 | Citations (`v0.3`) | — | — | — | 0,7 à 4,3 s*** | ~0,0003 $ / question*** |
 | Chunking `sentence` (étape 12) | **0,776** | 0,785 | 0,810 | 35 ms* | ~0,04 $ (unique)**** |
+| Métadonnées `doc_type` (étape 13) | 0,776 | 0,785 | 0,810 | 65 ms* | — |
+| Oracle de facette (étape 13, plafond) | 0,776 | 0,785 | 0,856 | 63 ms* | — |
 | Recherche hybride | — | — | — | — | — |
 | Reranking | — | — | — | — | — |
 
-\* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
+\* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms), `dense-sentence-doctype` et `dense-sentence-oracle-filter` à l'étape 13 (p50 65 et 63 ms, p95 94 et 92 ms — mesurés dans la même session, donc comparables entre eux mais pas à l'étape 12, dont la session était plus rapide sur toute la ligne). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
 
 \*\* Bout en bout via `scripts/ask.py`, sur quatre questions réelles : 851 à 1 021 tokens par appel à `gpt-4o-mini`, soit environ 0,0003 $ l'unité aux tarifs affichés. La génération domine, elle pèse plus de 95 % du temps de réponse.
 
