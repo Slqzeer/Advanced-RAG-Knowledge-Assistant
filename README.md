@@ -13,6 +13,7 @@
 - [Génération de réponses](#génération-de-réponses)
 - [Citations](#citations)
 - [Jeu d'évaluation](#jeu-dévaluation)
+- [Évaluation du retrieval](#évaluation-du-retrieval)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -32,7 +33,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 10 terminée — Jeu d'évaluation (`v0.4`).** La boucle est fermée, **vérifiable**, et désormais **mesurable** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et 50 questions annotées à la main attendent les métriques de l'étape 11. Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, et **sourcé pour de bon**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étape 11 terminée — Évaluation du retrieval (`v0.4`).** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée — Recall@5 0,713, MRR 0,788 — contre laquelle toutes les étapes suivantes seront comparées. Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -51,6 +52,7 @@ Fonctionnalités disponibles :
 - génération de réponses via `app.generation` et `scripts/ask.py` : contexte numéroté, appel au modèle à `temperature=0`, objet `Answer` avec sources, statistiques, tokens et latence ; 1,5 à 3,7 s de bout en bout, 851 à 1 021 tokens par question ;
 - validation des citations via `app.generation.citations` : chaque `[n]` est analysé puis confronté au contexte fourni, les sources rendues sont le sous-ensemble réellement cité, renuméroté de 1 dans le texte **et** dans la liste ;
 - jeu d'évaluation annoté via `app.evaluation.dataset` et `scripts/validate_dataset.py` : 50 questions, 5 catégories, vérité terrain au niveau document, recoupée avec le corpus nettoyé.
+- métriques et banc d'essai via `app.evaluation.metrics`, `app.evaluation.benchmark` et `scripts/benchmark.py` : Recall@K, Precision@K, MRR, Hit Rate@K et NDCG@K sur des documents dédupliqués, ventilation par catégorie, latence p50/p95, historique versionné dans `data/eval/results.jsonl` avec le commit git de chaque run.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
@@ -369,6 +371,117 @@ servi tout de suite : `reference/encoders` est écarté par le filtre de prose d
 l'étape 03, donc il ne peut pas être annoté comme source de `jsonable_encoder`,
 même si le fichier existe dans le corpus brut.
 
+## Évaluation du retrieval
+
+Le jeu d'évaluation est devenu des chiffres. `scripts/benchmark.py` fait passer les
+45 questions non réservées dans `search()`, calcule cinq métriques et ajoute une
+ligne à [`data/eval/results.jsonl`](data/eval/results.jsonl), avec le commit git qui
+l'a produite — marqué `-dirty` si l'arbre de travail ne l'était pas.
+
+```powershell
+docker compose up -d qdrant --wait
+uv run python scripts/benchmark.py --label "dense-baseline"
+uv run python scripts/benchmark.py --label "hybride" --compare "dense-baseline"
+```
+
+### Ce que les chiffres veulent dire
+
+Quatre conventions, fixées ici une fois pour toutes. Un étalon dont les définitions
+bougent n'est pas un étalon.
+
+- **`@K` compte des documents distincts, pas des chunks.** Le retrieval rend des
+  chunks, l'annotation porte sur des documents : deux chunks de la même page valent
+  un document retrouvé, au meilleur des deux rangs. Sans cette déduplication, une
+  stratégie de découpage qui rend cinq tranches d'une seule page afficherait une
+  Precision@5 parfaite — exactement le biais qui fausserait l'étape 12.
+- **Precision@K divise par `K`**, jamais par le nombre de résultats réellement
+  rendus. Les deux conventions existent ; celle-ci pénalise un système qui rend
+  trois résultats quand on lui en demande cinq, et c'est le comportement à pénaliser.
+- **Le MRR est la moyenne des `1 / rang` du premier document pertinent**, une valeur
+  par question. Les documents pertinents suivants ne comptent pas — c'est le rôle du
+  Recall.
+- **Les questions `unanswerable` sortent de toutes les métriques de classement** et
+  sont mesurées à part : le Recall sur un ensemble pertinent vide n'est pas défini,
+  et le scorer 0 ou 1 fausserait l'agrégat dans un sens comme dans l'autre. Elles
+  alimentent le *taux d'abstention*, la part de ces questions dont le meilleur score
+  passe sous 0,35.
+
+### Baseline dense — `dense-baseline`, 45 questions (38 répondables, 7 sans réponse)
+
+| Métrique | @1 | @3 | @5 | @10 |
+|---|---:|---:|---:|---:|
+| Recall | 0,333 | 0,634 | 0,713 | 0,737 |
+| Precision | 0,658 | 0,412 | 0,289 | 0,153 |
+| Hit Rate | 0,658 | 0,921 | 0,974 | 0,974 |
+| NDCG | 0,658 | 0,621 | 0,658 | 0,670 |
+
+MRR 0,788 · taux d'abstention 0,143 · latence p50 57 ms, p95 89 ms.
+
+| Catégorie | n | Recall@5 | Recall@10 | Precision@5 | MRR | NDCG@5 |
+|---|---:|---:|---:|---:|---:|---:|
+| `code` | 10 | 0,800 | 0,800 | 0,260 | 0,833 | 0,743 |
+| `conceptual` | 10 | 0,633 | 0,667 | 0,200 | 0,478 | 0,456 |
+| `exact` | 10 | 0,792 | 0,825 | 0,340 | 0,950 | 0,789 |
+| `multi_doc` | 8 | 0,604 | 0,635 | 0,375 | 0,917 | 0,638 |
+
+### Ce que la baseline dit, y compris ce qu'on n'attendait pas
+
+**Le Recall@10 ne dépasse le Recall@5 que de 0,024.** C'est le chiffre le plus
+important du tableau. Les documents qui manquent au top 5 ne sont pas non plus dans
+le top 10 : ils ne sont pas retrouvés du tout. Un reranker (étape 17) réordonne des
+candidats, il n'en invente pas — il ne peut donc récupérer que ces 2,4 points. Les
+étapes 14 à 16 (hybride, RRF) passent **avant** l'étape 17, et c'est cette mesure qui
+le décide, pas l'ordre du sommaire.
+
+**La catégorie `exact` bat la catégorie `conceptual`, l'inverse de ce qui était
+prévu.** Le plan de l'étape 11 annonçait un `exact` nettement plus faible ; il sort à
+0,792 de Recall@5 et 0,950 de MRR, contre 0,633 et 0,478 pour `conceptual`. La raison
+est que, selon les règles de l'étape 10, une question `exact` s'écrit comme on la
+tape : `UploadFile`, `Depends`, `jsonable_encoder`. Or un identifiant nu est aussi un
+point sémantiquement isolé — la page porte son nom en titre — et la recherche dense
+le retrouve sans effort. Le mode d'échec que BM25 corrige est autre : un token
+littéral **noyé dans une phrase**, où la prose environnante domine le vecteur. C'est
+précisément `HTTPException(status_code=422)` de l'étape 07, alors que `HTTPException`
+seul (q023) sort ici à 1,000. Le jeu n'a pas été retouché pour coller à l'attente :
+ces questions respectent leur propre règle d'annotation, et réécrire l'étalon après
+avoir vu le résultat est la meilleure façon de mesurer ce qu'on espérait mesurer.
+L'étape 14 ajoutera les questions à token littéral en prose, sous un nouveau label de
+run — un étalon modifié invalide les comparaisons faites avec l'ancien.
+
+**Le vrai point faible est `conceptual` : MRR 0,478.** Une question conceptuelle sur
+deux place son premier document pertinent au-delà du rang 2, sur le terrain de jeu
+supposé de la recherche dense. `q003` — « comment une URL entrante arrive-t-elle dans
+une de mes fonctions ? » — ne retrouve aucun de ses documents dans le top 10. Ce sont
+des questions longues et paraphrasées ; la réécriture de requête (étape 18) et le
+multi-query (étape 19) visent exactement cela, et elles ont maintenant un chiffre à
+battre.
+
+**Recall@1 0,333 contre Precision@1 0,658.** Le rang 1 est pertinent deux fois sur
+trois, mais il ne représente qu'un tiers des documents attendus : 2,17 documents
+pertinents en moyenne par question, un seul slot. Ce n'est pas un défaut, c'est la
+conséquence d'une annotation multi-documents voulue — et la raison pour laquelle le
+Hit Rate@5 (0,974) ne doit jamais être lu comme un score de réussite.
+
+**Un seuil de score ne peut pas porter le refus.** Les 7 questions hors corpus
+scorent entre 0,305 et 0,459, les questions répondables entre 0,341 et 0,664 : les
+deux distributions se chevauchent largement. À 0,35, une seule des 7 déclenche
+l'abstention, et remonter le seuil couperait de vraies réponses. Le constat de
+l'étape 07 sur cinq requêtes se confirme sur 45 : l'étape 22 aura besoin d'autre
+chose qu'un plancher.
+
+**Latence p50 57 ms, p95 89 ms**, vecteurs de requête en cache. Le premier passage,
+qui les calcule, donnait p50 320 ms et p95 1 522 ms : c'est l'aller-retour de
+vectorisation qui se mesure, pas Qdrant.
+
+### Méthode
+
+Chaque ligne de résultats qui suivra est produite par **la même commande, sur le même
+jeu de questions**, et ajoutée au même fichier d'historique avec son commit. Les
+régressions sont publiées à côté des améliorations : une technique qui n'améliore
+rien sur ce corpus est un résultat, pas un échec à cacher. Quand l'étalon lui-même
+change, le run change de label et l'ancienne comparaison est abandonnée, jamais
+prolongée en douce.
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -502,6 +615,10 @@ uv run python scripts/ask.py "What does Depends() with yield do differently?" --
 # Vérifier le jeu d'évaluation contre le corpus
 uv run python scripts/validate_dataset.py
 
+# Mesurer le retrieval sur le jeu d'évaluation (ajoute une ligne à data/eval/results.jsonl)
+uv run python scripts/benchmark.py --label "dense-baseline"
+uv run python scripts/benchmark.py --label "essai" --no-save --compare "dense-baseline"
+
 # Tests d'intégration Qdrant (ignorés si le serveur n'est pas joignable)
 uv run pytest -m requires_qdrant
 
@@ -518,13 +635,13 @@ docker compose down
 ├── app/
 │   ├── api/          # future API FastAPI
 │   ├── core/         # configuration partagée
-│   ├── evaluation/   # jeu d'évaluation annoté, futures métriques RAG
+│   ├── evaluation/   # jeu annoté, métriques de retrieval, banc d'essai
 │   ├── generation/   # contexte, appel au modèle, citations, orchestration
 │   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
 │   └── retrieval/    # indexation Qdrant et recherche par similarité
 ├── data/
-│   ├── eval/         # jeu de questions annoté, versionné
+│   ├── eval/         # jeu de questions annoté et historique des runs, versionnés
 │   ├── raw/          # sources locales non versionnées
 │   └── processed/    # données transformées non versionnées
 ├── docker/           # futurs fichiers de conteneurisation
@@ -542,7 +659,7 @@ docker compose down
 - [x] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking, embeddings, indexation Qdrant et recherche vectorielle (faits), génération de la réponse.
 - [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
-- [ ] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG.
+- [x] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG (faite, `v0.4`).
 - [ ] **Phase 5 — Recherche hybride** : combiner recherche dense et BM25.
 - [ ] **Phase 6 — Reranking** : optimiser la précision des candidats.
 - [ ] **Phase 7 — Query rewriting** : rendre les questions conversationnelles autonomes.
@@ -559,18 +676,18 @@ docker compose down
 
 ## Résultats
 
-Les résultats seront ajoutés avec les phases correspondantes. Une valeur absente signifie que l'expérience n'a pas encore été exécutée.
+Une valeur absente signifie que l'expérience n'a pas encore été exécutée. Chaque ligne chiffrée vient de [`data/eval/results.jsonl`](data/eval/results.jsonl), produite par la même commande sur le même jeu de questions — voir [Méthode](#méthode).
 
 | Version | Recall@5 | Recall@10 | MRR | Latence | Coût |
 |---|---:|---:|---:|---:|---:|
-| Recherche vectorielle naïve | — | — | — | 119 ms* | — |
+| Baseline dense (`v0.4`) | 0,713 | 0,737 | 0,788 | 57 ms* | — |
 | RAG minimal (`v0.2`) | — | — | — | 1,5 à 3,7 s** | ~0,0003 $ / question** |
 | Citations (`v0.3`) | — | — | — | 0,7 à 4,3 s*** | ~0,0003 $ / question*** |
 | Chunking amélioré | — | — | — | — | — |
 | Recherche hybride | — | — | — | — | — |
 | Reranking | — | — | — | — | — |
 
-\* Latence de recherche seule, vecteur de requête déjà en cache ; 0,9 à 1,8 s quand il faut le calculer. Les métriques de qualité arrivent avec l'étape 11, qui construit le jeu d'évaluation.
+\* Mesuré par `scripts/benchmark.py --label "dense-baseline"` sur les 45 questions non réservées, au commit `4640e02`. Latence de recherche seule (p50 ; p95 89 ms), vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
 
 \*\* Bout en bout via `scripts/ask.py`, sur quatre questions réelles : 851 à 1 021 tokens par appel à `gpt-4o-mini`, soit environ 0,0003 $ l'unité aux tarifs affichés. La génération domine, elle pèse plus de 95 % du temps de réponse.
 

@@ -1,6 +1,6 @@
 # Step 11 — Retrieval Metrics and Benchmark
 
-> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Steps use `- [ ]` for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Steps use `- [x]` for tracking.
 
 **Goal:** Turn the step 10 dataset into numbers: Recall@K, Precision@K, MRR, Hit Rate, NDCG@K, plus latency. Produce the baseline row that every later step is compared against. This is `v0.4` and the point at which the project becomes presentable.
 
@@ -39,7 +39,7 @@
 
 ### Task 1: The metrics
 
-- [ ] **Step 1: Failing tests with hand-computed expected values.** Every number below is worked out by hand in the test, with the arithmetic in a comment. This is the one module in the project where "looks about right" is not acceptable.
+- [x] **Step 1: Failing tests with hand-computed expected values.** Every number below is worked out by hand in the test, with the arithmetic in a comment. This is the one module in the project where "looks about right" is not acceptable.
 
 Helpers:
 1. `dedupe_to_documents(["a#1", "a#2", "b#0"])` → `["a", "b"]`, preserving best rank.
@@ -74,13 +74,13 @@ Edge cases:
 18. Empty relevant set raises `ValueError` — that case belongs to the abstention path, and silently returning 0.0 or 1.0 would poison the aggregate.
 19. K=0 raises.
 
-- [ ] **Step 2: Write `app/evaluation/metrics.py`.** Plain functions, full docstrings stating the convention each one follows.
+- [x] **Step 2: Write `app/evaluation/metrics.py`.** Plain functions, full docstrings stating the convention each one follows.
 
-- [ ] **Step 3: Green.** Commit: `feat(evaluation): add retrieval metrics`.
+- [x] **Step 3: Green.** Commit: `feat(evaluation): add retrieval metrics`.
 
 ### Task 2: The benchmark runner
 
-- [ ] **Step 1: Failing tests** with a fake retriever returning scripted results.
+- [x] **Step 1: Failing tests** with a fake retriever returning scripted results.
 
 1. A 3-question dataset produces per-question rows and an aggregate.
 2. Aggregates are means over answerable questions only.
@@ -90,7 +90,7 @@ Edge cases:
 6. Latency p50/p95 are populated.
 7. The result dict is JSON-serialisable (no numpy types, no `Path`, no pydantic object) — this is what gets appended to the history file.
 
-- [ ] **Step 2: Write `app/evaluation/benchmark.py`**
+- [x] **Step 2: Write `app/evaluation/benchmark.py`**
 
 ```python
 def run_benchmark(
@@ -107,11 +107,11 @@ Retrieve `max(ks)` results once per question and compute every K from that singl
 
 `BenchmarkResult` holds `label`, `timestamp`, `git_commit`, `config`, `aggregate`, `per_category`, `per_question`, `latency_p50_ms`, `latency_p95_ms`, `failures`.
 
-- [ ] **Step 3: Green.** Commit: `feat(evaluation): add the benchmark runner`.
+- [x] **Step 3: Green.** Commit: `feat(evaluation): add the benchmark runner`.
 
 ### Task 3: The CLI
 
-- [ ] **Step 1: Write `scripts/benchmark.py`**
+- [x] **Step 1: Write `scripts/benchmark.py`**
 
 Arguments: `--label` (required — an unlabelled row in the history is useless), `--top-k`, `--source`, `--include-held-out`, `--no-save`, `--compare <label>`.
 
@@ -119,27 +119,27 @@ Output: a Markdown table of the aggregate, a per-category table, latency, failur
 
 Capture the git commit with `git rev-parse --short HEAD` and mark it dirty when the worktree is not clean. A benchmark row attributed to a clean commit that was actually run on uncommitted code is a lie you will believe later.
 
-- [ ] **Step 2: Run the baseline**
+- [x] **Step 2: Run the baseline**
 
 ```powershell
 docker compose up -d qdrant --wait
 uv run python scripts/benchmark.py --label "dense-baseline"
 ```
 
-- [ ] **Step 3: Read the per-category numbers carefully.** Expectations worth checking against reality:
+- [x] **Step 3: Read the per-category numbers carefully.** Expectations worth checking against reality:
   - `exact` should be clearly worse than `conceptual`. If it is not, the `exact` questions are not exact enough — fix the dataset, not the retriever.
   - `multi_doc` Recall@5 should be low, because 5 slots rarely cover 3 documents.
   - Recall@10 well above Recall@5 means reranking (step 17) has room to work; similar values mean the retriever is missing documents entirely and reranking cannot help.
 
   Write these observations down. They are the reasoning that makes steps 12-19 deliberate instead of a list of techniques applied because a blog post said so.
 
-- [ ] **Step 4: Commit.** `feat(evaluation): add the benchmark CLI` plus the baseline results row.
+- [x] **Step 4: Commit.** `feat(evaluation): add the benchmark CLI` plus the baseline results row.
 
 ### Task 4: Documentation and the tag
 
-- [ ] **Step 1: Fill in the README results table** with the real baseline — the first row with numbers instead of em dashes. Add the per-category table and the metric definitions (especially the document-level `@K` convention and the Precision@K denominator). Add the benchmark command.
-- [ ] **Step 2: Add a short "Méthode" note** stating the rule: every later row is produced by the same command against the same dataset, and regressions get published alongside improvements.
-- [ ] **Step 3: Commit and tag.** `docs: publish the retrieval baseline`, then `git tag v0.4`.
+- [x] **Step 1: Fill in the README results table** with the real baseline — the first row with numbers instead of em dashes. Add the per-category table and the metric definitions (especially the document-level `@K` convention and the Precision@K denominator). Add the benchmark command.
+- [x] **Step 2: Add a short "Méthode" note** stating the rule: every later row is produced by the same command against the same dataset, and regressions get published alongside improvements.
+- [x] **Step 3: Commit and tag.** `docs: publish the retrieval baseline`, then `git tag v0.4`.
 
 ## Verification
 
