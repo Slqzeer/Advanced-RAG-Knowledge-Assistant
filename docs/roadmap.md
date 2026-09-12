@@ -8,7 +8,7 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-08 are done — `v0.2` is tagged. Step 09 (citations) is next.**
+**Phase 0 and steps 02-12 are done — `v0.4` is tagged. Step 13 (metadata filtering) is next.**
 
 Shipped and verified:
 
@@ -21,19 +21,25 @@ Shipped and verified:
 | Smoke test | `tests/test_environment.py` — imports only |
 | FastAPI corpus, fetched and loaded | `scripts/fetch_corpus.py`, `app/ingestion/loader.py` — 155 Markdown files |
 | Markdown cleaning | `app/ingestion/clean.py` — 155 in, 8 stubs dropped, 1 463 414 → 1 041 001 chars (71%), 0 code blocks lost |
-| Basic chunking | `app/ingestion/chunk.py` — 147 docs → 1 607 chunks, median 795 chars, 10 oversized (a whole code fence each), reconstruction tested |
+| Basic chunking | `app/ingestion/chunk.py` — recursive splitting, 147 docs → 1 607 chunks, median 795 chars, 10 oversized (a whole code fence each), reconstruction tested |
 | Embeddings, cached | `app/ingestion/embed.py` — 1 607 chunks → 1 536 dims via `text-embedding-3-small`, 404 s cold / 0.12 s warm, 13.3 MB sqlite cache, $0.006 |
 | Shared settings | `app/core/config.py` — one `Settings`, `.env` loaded once through an `lru_cache`d accessor |
 | Qdrant indexing | `app/retrieval/store.py`, `scripts/index_corpus.py` — 1 607 points, cosine, payload indexes on `source`/`document_id`/`language`, 4.4 s end to end; a re-run leaves 1 607 points in 3.5 s |
 | Similarity search | `app/retrieval/search.py`, `scripts/search.py` — ranked `ScoredChunk`s, 119 ms warm / 0.9-1.8 s cold, 15 tests; `HTTPException 422` recorded as the hybrid-search target (1 chunk in the top 50 contains the token, at rank 5) |
 | Minimal RAG | `app/generation/{context,llm,answer}.py`, `app/models/answers.py`, `scripts/ask.py` — `gpt-4o-mini` at `temperature=0`, 1.5-3.7 s end to end, 851-1 021 tokens/question (~$0.0003), 23 tests with no network; a French question answers in French, an out-of-corpus question answers "I do not know" |
+| Citation validation | `app/generation/citations.py` — every `[n]` parsed and checked against the context actually supplied, sources renumbered from 1 in the text *and* the list, `--strict` fails instead of warning |
+| Evaluation dataset | `app/evaluation/dataset.py`, `scripts/validate_dataset.py` — 50 questions, 5 categories, document-level ground truth cross-checked against the cleaned corpus, 5 held out |
+| Retrieval metrics | `app/evaluation/metrics.py`, `app/evaluation/benchmark.py`, `scripts/benchmark.py` — Recall@K, Precision@K, MRR, Hit Rate@K, NDCG@K over deduplicated documents, per-category breakdown, p50/p95 latency, history in `data/eval/results.jsonl` with the git commit of each run |
+| Chunking comparison | `app/ingestion/chunk.py` — four strategies behind one registry (`recursive`, `fixed`, `sentence`, `semantic`), one Qdrant collection each, nine runs; `sentence` wins Recall@5 0.776 against the 0.713 baseline and becomes the default, 147 docs → 1 484 chunks |
 
-The loop is closed: a question goes in, a grounded answer with sources comes out of `scripts/ask.py`. No HTTP endpoint yet — that is step 25 — and no citation validation yet, which is step 09.
+The loop is closed, verified and measured: a question goes in, a grounded answer with resolved citations comes out of `scripts/ask.py`, and 38 answerable questions give it a score. No HTTP endpoint yet — that is step 25.
 
-Two things step 08 measured that later steps own:
+Four things later steps own:
 
-- **`HTTPException 422` now fails visibly.** The answer is an honest "I do not know" because dense retrieval never surfaces the paragraph defining 422 — the step 07 finding, now costing a real answer. Step 14's target.
-- **Generation is ~95 % of the latency.** 1.5-3.7 s per question against 119 ms of warm retrieval. Any latency work before step 23's cache would be optimising the wrong 5 %.
+- **`HTTPException 422` still fails visibly**, chunking included. The answer is an honest "I do not know" because dense retrieval never surfaces the paragraph defining 422 — the step 07 finding, still costing a real answer. Step 14's target, and step 12 confirmed chunking cannot reach it.
+- **Recall@10 minus Recall@5 is now 0.009**, down from 0.024. The number to watch across steps 12-17. While it stays near zero the retriever is missing documents outright and a reranker has nothing to reorder: step 14's hybrid search has to open the gap before step 17 is worth running.
+- **Generation is ~95 % of the latency.** 1.5-3.7 s per question against ~35 ms of warm retrieval. Any latency work before step 23's cache would be optimising the wrong 5 %.
+- **A score threshold cannot carry refusal.** The 7 out-of-corpus questions score 0.305-0.459, the answerable ones 0.341-0.664. Step 22 needs something other than a floor.
 
 ## The three rules
 
@@ -51,7 +57,7 @@ Two things step 08 measured that later steps own:
 | 02-08 | Phase 1 — Minimal RAG | `v0.2` | Ask a question about FastAPI, get an answer from your own corpus. |
 | 09 | Phase 10 — Citations | `v0.3` | Every factual sentence carries `[n]` and resolves to a real source. |
 | 10-11 | Phase 4 — Retrieval evaluation | `v0.4` | A baseline table: Recall@5, Recall@10, MRR, NDCG. The project is presentable here. |
-| 12 | Phase 2 — Chunking | `v0.4+` | Five chunking strategies, one winner, chosen by Recall@5. |
+| 12 | Phase 2 — Chunking | `v0.4+` | Four chunking strategies, one winner, chosen by Recall@5. **Done — `sentence`, Recall@5 0.776.** |
 | 13 | Phase 3 — Metadata | — | `source=fastapi` filters, and per-source recall numbers. |
 | 14-16 | Phase 5-6 — Hybrid + RRF | `v0.5`-`v0.6` | Dense + BM25 fused; `HTTPException 422` finally retrieves. |
 | 17 | Phase 6 — Reranking | `v0.7` | Top-30 recall, top-5 precision, measured latency cost. |
@@ -67,7 +73,7 @@ Two things step 08 measured that later steps own:
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-11:
+Detailed, executable plans exist for steps 02-12:
 
 | Step | Plan |
 |---|---|
@@ -81,8 +87,9 @@ Detailed, executable plans exist for steps 02-11:
 | 09 Citations | [`2026-09-11-step-09-citations.md`](superpowers/plans/2026-09-11-step-09-citations.md) |
 | 10 Evaluation dataset | [`2026-09-11-step-10-evaluation-dataset.md`](superpowers/plans/2026-09-11-step-10-evaluation-dataset.md) |
 | 11 Retrieval metrics | [`2026-09-11-step-11-retrieval-metrics.md`](superpowers/plans/2026-09-11-step-11-retrieval-metrics.md) |
+| 12 Chunking experiments | [`2026-09-12-step-12-chunking.md`](superpowers/plans/2026-09-12-step-12-chunking.md) |
 
-**Steps 12-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: which chunking strategy wins, whether BM25 helps this corpus, whether reranking pays for its latency, whether multi-query is worth 4x the cost. Writing those plans now would mean inventing the answers. Each plan gets written at the start of its own step, with step 11's numbers in hand.
+**Steps 13-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: which chunking strategy wins, whether BM25 helps this corpus, whether reranking pays for its latency, whether multi-query is worth 4x the cost. Writing those plans now would mean inventing the answers. Each plan gets written at the start of its own step, with step 11's numbers in hand.
 
 ## How a step lands
 

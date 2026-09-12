@@ -14,6 +14,7 @@
 - [Citations](#citations)
 - [Jeu d'évaluation](#jeu-dévaluation)
 - [Évaluation du retrieval](#évaluation-du-retrieval)
+- [Découpage — quatre stratégies comparées](#découpage--quatre-stratégies-comparées)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -33,7 +34,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 11 terminée — Évaluation du retrieval (`v0.4`).** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée — Recall@5 0,713, MRR 0,788 — contre laquelle toutes les étapes suivantes seront comparées. Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étape 12 terminée — Découpage comparé et promu.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -44,7 +45,7 @@ Fonctionnalités disponibles :
 - récupération du corpus FastAPI (155 fichiers Markdown) via `scripts/fetch_corpus.py` ;
 - chargement en `RawDocument` triés et reproductibles via `app.ingestion.loader` ;
 - nettoyage du Markdown MkDocs via `app.ingestion.clean` : 155 documents en entrée, 8 stubs écartés, 147 conservés, 1 463 414 → 1 041 001 caractères (71 %) ;
-- découpage en chunks superposés via `app.ingestion.chunk` : 147 documents → 1 607 chunks ;
+- découpage en chunks superposés via `app.ingestion.chunk` : quatre stratégies (`recursive`, `fixed`, `sentence`, `semantic`) derrière un registre, `sentence` par défaut depuis l'étape 12, 147 documents → 1 484 chunks ;
 - vectorisation via `app.ingestion.embed` : 1 607 chunks → 1 536 dimensions, cache sqlite persistant de 13,3 Mo, 404 s à froid puis 0,12 s à chaud ;
 - configuration partagée via `app.core.config` : une classe `Settings` lue une seule fois, qui charge `.env` ;
 - indexation dans Qdrant via `app.retrieval.store` et `scripts/index_corpus.py` : 1 607 points, distance cosinus, index de payload sur `source`, `document_id` et `language` ;
@@ -65,17 +66,21 @@ Découpage récursif par caractères, écrit à la main : on coupe sur le sépar
 `, `
 `, `. `, ` `), et on descend d'un cran pour les morceaux encore trop longs. Le séparateur vide final garantit la terminaison sur un bloc sans aucune coupure possible.
 
-Paramètres de référence — `chunk_size=1000`, `overlap=200`, en **caractères** et non en tokens (≈ 4 caractères par token en prose anglaise, moins en code). La phase 2 comparera d'autres stratégies contre exactement ces chiffres.
+Paramètres de référence — `chunk_size=1000`, `overlap=200`, en **caractères** et non en tokens (≈ 4 caractères par token en prose anglaise, moins en code).
 
-| Mesure | Valeur |
-|---|---|
-| Documents en entrée | 147 |
-| Chunks produits | 1 607 |
-| Chunks par document (médiane / max) | 5 / 590 |
-| Taille médiane | 795 caractères |
-| Taille min / max | 74 / 2 331 |
-| Chunks hors limite | 10 (0,6 %) |
-| Chunks avec `section` renseignée | 1 404 (87 %) |
+**La stratégie par défaut est `sentence` depuis l'étape 12**, qui a comparé les quatre sur les 38 questions répondables : voir [Découpage — quatre stratégies comparées](#découpage--quatre-stratégies-comparées). `recursive` reste dans le registre, mesuré, comme point de comparaison.
+
+| Mesure | `sentence` (défaut) | `recursive` (étape 04) |
+|---|---:|---:|
+| Documents en entrée | 147 | 147 |
+| Chunks produits | 1 484 | 1 607 |
+| Chunks par document (médiane / max) | 5 / 532 | 5 / 590 |
+| Taille médiane | 865 caractères | 795 caractères |
+| Taille min / max | 76 / 3 803 | 74 / 2 331 |
+| Chunks hors limite | 26 (1,8 %) | 10 (0,6 %) |
+| Chunks avec `section` renseignée | 1 297 (87 %) | 1 404 (87 %) |
+
+`sentence` produit moins de chunks, plus gros, et plus de dépassements : un bloc de code n'est précédé d'aucune fin de phrase, il fusionne donc avec la prose qui l'entoure jusqu'au point suivant. Le plus long fait 3 803 caractères. C'est le coût assumé de ne jamais couper une phrase, et le tableau de l'étape 12 dit ce qu'il achète.
 
 **Aucun bloc de code n'est jamais coupé en deux.** Les spans que l'étape 03 reconnaît comme du code sont interdits de frontière ; un bloc plus long que `chunk_size` devient donc un chunk hors limite à lui seul, avec un avertissement journalisé. Les 10 cas mesurés sont tous un unique bloc clôturé (schéma OpenAPI, sortie `console`, diagramme d'exécution). C'est le plafond assumé de l'étape.
 
@@ -482,6 +487,200 @@ rien sur ce corpus est un résultat, pas un échec à cacher. Quand l'étalon lu
 change, le run change de label et l'ancienne comparaison est abandonnée, jamais
 prolongée en douce.
 
+## Découpage — quatre stratégies comparées
+
+Première étape où le projet se comporte comme un moteur de recherche plutôt que
+comme une enveloppe autour d'un LLM. Quatre découpeurs derrière un même registre,
+tous avec le même contrat `texte -> [(début, fin)]`, une collection Qdrant par
+stratégie, et la même commande de mesure sur le même jeu de 38 questions
+répondables.
+
+```powershell
+docker compose up -d qdrant --wait
+uv run python scripts/index_corpus.py --strategy sentence --collection chunks_sentence --recreate
+uv run python scripts/benchmark.py --label "chunk-sentence-1000-200" --collection chunks_sentence --strategy sentence
+uv run python scripts/benchmark.py --summary "chunk-*"
+```
+
+Les quatre stratégies :
+
+| Stratégie | Ce qu'elle fait | Coupe dans un bloc de code ? |
+|---|---|---|
+| `recursive` | Séparateur le plus sémantique qui tient, récursion sur ce qui dépasse. La baseline de l'étape 04. | jamais |
+| `fixed` | Coupe dure tous les `taille - recouvrement` caractères. Le témoin. | oui, délibérément |
+| `sentence` | Phrases entières empilées jusqu'au plafond, recouvrement en phrases entières. | jamais |
+| `semantic` | Idem, plus une coupure là où la distance cosinus entre deux phrases voisines dépasse le 95ᵉ centile **du document**. | jamais |
+
+`fixed` est naïf **exprès**, et un test l'y oblige : il exige que `fixed` coupe un
+bloc clôturé en deux. Un témoin qui protégerait discrètement le code enlèverait le
+plancher de la comparaison, et personne ne pourrait plus dire ce que les trois
+autres achètent.
+
+### La règle de décision, écrite avant le premier run
+
+Le gagnant est le meilleur Recall@5 global. Tout écart inférieur à **0,026** — une
+question sur 38 — est une égalité, tranchée par le Recall@5 de la catégorie
+`conceptual`, là où la baseline est la plus faible. Une règle inventée après avoir
+vu le tableau n'est pas une règle.
+
+### Manche 1 — quatre stratégies à 1000/200
+
+| Run | Stratégie | Chunks | Recall@5 | Recall@10 | MRR | NDCG@5 | `conceptual` R@5 | p50 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `chunk-sentence-1000-200` | `sentence` | 1 484 | **0,776** | 0,785 | 0,810 | 0,713 | **0,733** | 36 ms |
+| `chunk-fixed-1000-200` | `fixed` | 1 347 | 0,752 | 0,779 | 0,832 | 0,708 | 0,683 | 34 ms |
+| `chunk-semantic-1000-200` | `semantic` | 1 885 | 0,750 | 0,783 | 0,770 | 0,680 | 0,633 | 34 ms |
+| `chunk-recursive-1000-200` | `recursive` | 1 607 | 0,713 | 0,737 | 0,788 | 0,658 | 0,633 | 37 ms |
+
+`chunk-recursive-1000-200` reproduit `dense-baseline` à la troisième décimale près
+sur les cinq métriques. C'est le contrôle qui dit que la seule chose ayant changé
+entre les collections est le découpage.
+
+**Application de la règle.** `sentence` mène à 0,776. `fixed` est à 0,024 derrière,
+donc à égalité au sens de la règle ; `semantic` est à 0,026, hors fenêtre. Le
+départage sur `conceptual` donne `sentence` (0,733) contre `fixed` (0,683).
+**`sentence` gagne.**
+
+### Manche 2 — balayage de taille sur `sentence`
+
+| Taille | Chunks | Recall@5 | Recall@10 | MRR | NDCG@5 | `conceptual` R@5 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 500 | 4 008 | 0,715 | 0,752 | 0,787 | 0,673 | 0,633 |
+| **1000** | **1 484** | **0,776** | 0,785 | 0,810 | 0,713 | 0,733 |
+| 1500 | 923 | 0,741 | 0,785 | 0,865 | 0,728 | 0,733 |
+
+Écart 0,061, au-dessus du seuil de 0,026 : la manche 3 est méritée.
+
+### Manche 3 — balayage de recouvrement à 1000
+
+| Recouvrement | Chunks | Recall@5 | Recall@10 | MRR | NDCG@5 | `conceptual` R@5 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 1 186 | 0,726 | 0,774 | 0,801 | 0,676 | 0,683 |
+| **200** | **1 484** | **0,776** | 0,785 | 0,810 | 0,713 | 0,733 |
+| 400 | 1 990 | 0,719 | 0,768 | 0,790 | 0,678 | 0,633 |
+
+1000/200 est le sommet des deux courbes. Les valeurs par défaut de l'étape 04
+survivent au balayage : **seule la stratégie change.**
+
+### Résultat promu — `dense-sentence` contre `dense-baseline`
+
+| Métrique | @1 | @3 | @5 | @10 |
+|---|---:|---:|---:|---:|
+| Recall | 0,360 | 0,656 | 0,776 | 0,785 |
+| Precision | 0,684 | 0,430 | 0,321 | 0,163 |
+| Hit Rate | 0,684 | 0,895 | 1,000 | 1,000 |
+| NDCG | 0,684 | 0,655 | 0,713 | 0,717 |
+
+MRR 0,810 · taux d'abstention 0,143 · latence p50 35 ms, p95 62 ms.
+
+| Métrique | `dense-baseline` | `dense-sentence` | Écart |
+|---|---:|---:|---:|
+| Recall@5 | 0,713 | 0,776 | **+0,064** |
+| Recall@10 | 0,737 | 0,785 | +0,048 |
+| Precision@5 | 0,289 | 0,321 | +0,032 |
+| Hit Rate@5 | 0,974 | 1,000 | +0,026 |
+| NDCG@5 | 0,658 | 0,713 | +0,055 |
+| MRR | 0,788 | 0,810 | +0,022 |
+| Taux d'abstention | 0,143 | 0,143 | +0,000 |
+
+Écarts de Recall@5 par catégorie, contre `dense-baseline` :
+
+| Catégorie | `fixed` | `sentence` | `semantic` |
+|---|---:|---:|---:|
+| `exact` | +0,042 | **+0,100** | **+0,100** |
+| `code` | +0,000 | +0,050 | **+0,100** |
+| `conceptual` | +0,050 | **+0,100** | +0,000 |
+| `multi_doc` | **+0,073** | −0,010 | −0,073 |
+
+### Ce que les chiffres disent, y compris ce qu'on n'attendait pas
+
+**Le découpage était bien un goulot d'étranglement.** +0,064 de Recall@5, soit deux
+fois et demie la fenêtre d'égalité. Le plan prévoyait explicitement le cas contraire
+— « aucune stratégie ne bat la baseline de plus de 0,026, et c'est publiable » — et
+ce n'est pas ce qui s'est produit.
+
+**Le gain est du vrai retrieval, pas de l'arithmétique de déduplication.** L'objection
+évidente : des chunks plus petits font tenir plus de documents dans cinq slots, donc
+le Recall monte et la Precision descend. Ici les deux montent — Precision@5 0,289 →
+0,321 — et le Hit Rate@5 atteint 1,000. `sentence` produit d'ailleurs **moins** de
+chunks que `recursive` (1 484 contre 1 607), pas plus. Les documents retrouvés le
+sont parce qu'ils ressemblent mieux à la question, pas parce qu'il y en a davantage.
+
+**`fixed` ne perd pas, et c'est le vrai titre de l'étape.** Le témoin naïf, celui qui
+a le droit de couper un bloc de code en deux, bat `recursive` de 0,039 sur le Recall@5
+global. Toute la machinerie de séparateurs de l'étape 04 — titres, paragraphes,
+protection du code, recul sur séparateur pour le recouvrement — ne rapporte rien sur
+ce corpus par rapport à une coupure tous les 800 caractères. Le coût de la naïveté
+apparaît quand même, mais en creux : `fixed` est la seule stratégie à ne rien gagner
+du tout sur `code` (+0,000), pendant que `sentence` prend +0,050 et `semantic` +0,100.
+La protection des blocs de code paie ; le reste de la récursion, non.
+
+**`semantic` aide `exact` et `code`, pas `conceptual` — l'inverse de l'hypothèse.**
+`conceptual` est la catégorie dont la réponse s'étale sur tout un passage explicatif,
+c'était la cible désignée du découpage sémantique. Il y gagne exactement +0,000,
+pendant que `sentence`, qui ignore complètement les embeddings, y gagne +0,100. Le
+diagnostic est celui que le plan avait nommé d'avance : **le seuil coupe sur la mise
+en forme, pas sur le sens.** Dans de la documentation Markdown, les plus grands sauts
+de distance entre phrases voisines sont aux transitions prose → bloc de code et
+prose → titre, pas aux changements d'idée. Le 95ᵉ centile atterrit dessus, `semantic`
+isole donc proprement les blocs de code — d'où son meilleur score `code` de tout le
+tableau, 0,900 — et laisse la prose conceptuelle exactement où elle était. Une piste
+existe (bouger le centile, lisser les distances sur une fenêtre), elle est listée en
+[écarté volontairement](#écarté-volontairement) plutôt que bricolée après coup.
+
+**Plus petit n'est pas mieux ici.** L'attente usuelle est qu'un chunk plus court monte
+le Recall@5. À 500 caractères c'est le pire résultat du balayage (0,715), et à 1500 la
+`conceptual` reste à son maximum. Un chunk de 500 caractères coupe une explication en
+deux moitiés dont aucune ne répond seule à la question ; le corpus FastAPI est fait de
+paragraphes explicatifs, pas de fiches.
+
+**L'écart Recall@10 − Recall@5 se resserre : 0,024 → 0,009.** C'est le chiffre à
+suivre sur les étapes 12 à 17, et il va dans la direction inconfortable. `sentence` a
+trouvé ce qu'il y avait à trouver dans le top 5 ; les documents encore manquants ne
+sont pas non plus dans le top 10, ils ne sont pas retrouvés du tout. Un reranker
+(étape 17) réordonne des candidats, il n'en fabrique pas : il n'a désormais plus que
+0,9 point à récupérer. **La recherche hybride de l'étape 14 est plus nécessaire
+qu'avant cette étape, pas moins.** `semantic` est la seule à élargir l'écart (0,033),
+sans compenser ailleurs.
+
+**`multi_doc` est la seule catégorie que le gagnant dégrade** (−0,010), et `semantic`
+la casse franchement (−0,073). Des chunks plus gros et moins nombreux concentrent le
+top 5 sur moins de documents distincts, ce qui pénalise exactement les questions dont
+la réponse est répartie sur plusieurs pages. `fixed`, qui produit les chunks les plus
+petits des trois, y est le meilleur (+0,073). Le compromis est réel et assumé : 8
+questions sur 38, contre un gain de +0,100 sur les deux catégories de 10.
+
+**Le taux d'abstention ne bouge pas** (0,143), et les variantes qui l'ont vu doubler
+à 0,286 l'ont fait sur 2 questions hors corpus contre 1, sur un échantillon de 7. À
+cette taille ce n'est pas un signal, et il n'est pas lu comme tel.
+
+### Pourquoi le parent-child n'est pas dans ce tableau
+
+Le *parent-child retrieval* — vectoriser un petit chunk enfant, mais rendre au LLM le
+gros chunk parent qui le contient — est la stratégie que toute liste de techniques de
+chunking cite, et elle est **volontairement absente** de cette comparaison.
+
+La raison tient à ce que l'étape 10 a annoté. La vérité terrain porte sur des
+**documents**, pas sur des chunks, et c'est un choix délibéré : c'est précisément ce
+qui rend deux découpages comparables entre eux. Or le parent-child change quel *texte*
+arrive au LLM, pas quels *documents* remontent dans le top K. Le Recall@5 lui
+attribuerait donc exactement le score du découpage enfant qu'il enveloppe. Publier ce
+chiffre serait publier une mesure sans information dedans.
+
+Ce qui le mesure vraiment, ce sont le nombre de tokens de contexte et la qualité de la
+réponse — les métriques des étapes 20 et 21. Il y est évalué, pas ici.
+
+### Écarté volontairement
+
+| Écarté | À ajouter quand |
+|---|---|
+| Parent-child retrieval | étape 20 — ses métriques sont les tokens de contexte et la qualité de réponse, le Recall@5 y est aveugle |
+| Tailles de chunk en tokens | étape 20, quand une limite de contexte contraindra vraiment |
+| La grille complète des 24 runs | la courbe de taille du gagnant n'est pas plate **et** une interaction stratégie × taille devient plausible |
+| Réglage du centile de `semantic` | jamais sur ce corpus : `semantic` est à 0,026 du gagnant et son gain tombe sur les mauvaises catégories, le centile n'est pas ce qui le décide |
+| Annotation de pertinence au niveau chunk | jamais — l'annotation au niveau document est exactement ce qui rend deux découpages comparables |
+| Suppression des collections perdantes | quand l'étape 14 aura besoin de la place |
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -601,6 +800,9 @@ uv run python scripts/fetch_corpus.py
 uv run python scripts/index_corpus.py --limit 20 --dry-run
 uv run python scripts/index_corpus.py --recreate
 
+# Indexer avec une autre stratégie de découpage, dans sa propre collection (étape 12)
+uv run python scripts/index_corpus.py --strategy semantic --collection chunks_semantic --chunk-size 1000 --overlap 200 --recreate
+
 # Interroger l'index
 uv run python scripts/search.py "How does dependency injection work in FastAPI?"
 uv run python scripts/search.py "HTTPException 422" --top-k 10 --source fastapi
@@ -618,6 +820,10 @@ uv run python scripts/validate_dataset.py
 # Mesurer le retrieval sur le jeu d'évaluation (ajoute une ligne à data/eval/results.jsonl)
 uv run python scripts/benchmark.py --label "dense-baseline"
 uv run python scripts/benchmark.py --label "essai" --no-save --compare "dense-baseline"
+
+# Mesurer une autre collection, puis résumer l'historique par glob de label (étape 12)
+uv run python scripts/benchmark.py --label "chunk-semantic-1000-200" --collection chunks_semantic --strategy semantic
+uv run python scripts/benchmark.py --summary "chunk-*"
 
 # Tests d'intégration Qdrant (ignorés si le serveur n'est pas joignable)
 uv run pytest -m requires_qdrant
@@ -657,7 +863,7 @@ docker compose down
 
 - [x] **Phase 0 — Préparer le projet** : environnement, qualité, structure et Qdrant local.
 - [x] **Phase 1 — RAG minimal** : ingestion, nettoyage, chunking, embeddings, indexation Qdrant et recherche vectorielle (faits), génération de la réponse.
-- [ ] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact.
+- [x] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact (faite ; `sentence` gagne, Recall@5 0,776).
 - [ ] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk.
 - [x] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG (faite, `v0.4`).
 - [ ] **Phase 5 — Recherche hybride** : combiner recherche dense et BM25.
@@ -683,15 +889,17 @@ Une valeur absente signifie que l'expérience n'a pas encore été exécutée. C
 | Baseline dense (`v0.4`) | 0,713 | 0,737 | 0,788 | 57 ms* | — |
 | RAG minimal (`v0.2`) | — | — | — | 1,5 à 3,7 s** | ~0,0003 $ / question** |
 | Citations (`v0.3`) | — | — | — | 0,7 à 4,3 s*** | ~0,0003 $ / question*** |
-| Chunking amélioré | — | — | — | — | — |
+| Chunking `sentence` (étape 12) | **0,776** | 0,785 | 0,810 | 35 ms* | ~0,04 $ (unique)**** |
 | Recherche hybride | — | — | — | — | — |
 | Reranking | — | — | — | — | — |
 
-\* Mesuré par `scripts/benchmark.py --label "dense-baseline"` sur les 45 questions non réservées, au commit `4640e02`. Latence de recherche seule (p50 ; p95 89 ms), vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
+\* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
 
 \*\* Bout en bout via `scripts/ask.py`, sur quatre questions réelles : 851 à 1 021 tokens par appel à `gpt-4o-mini`, soit environ 0,0003 $ l'unité aux tarifs affichés. La génération domine, elle pèse plus de 95 % du temps de réponse.
 
 \*\*\* Sept questions réelles, 923 à 1 289 tokens par appel. La validation des citations est du traitement de chaîne en mémoire et ne se mesure pas à côté de l'aller-retour réseau ; la fourchette s'élargit vers le bas parce qu'un refus est court à générer, et vers le haut parce que le prompt v2 est plus long que le v1. Les métriques de qualité restent vides jusqu'à l'étape 11.
+
+\*\*\*\* Coût total de l'étape 12, unique et non récurrent : neuf indexations complètes du corpus plus la vectorisation phrase à phrase que `semantic` exige, aux tarifs `text-embedding-3-small`. Le cache d'embeddings est partagé entre les stratégies — il est clé sur `sha256(modèle + texte)` — donc seuls les spans réellement nouveaux ont été payés. Les runs suivants sortent du cache.
 
 ## Qualité et CI
 

@@ -56,7 +56,7 @@ Recall@10 sits only 0.024 above Recall@5. The retriever is not mis-ranking docum
 
 ### Task 1: The three new splitters
 
-- [ ] **Step 1: Failing tests.** The existing coverage and reconstruction properties get applied to every strategy, parametrised — that is the whole reason offsets were the contract.
+- [x] **Step 1: Failing tests.** The existing coverage and reconstruction properties get applied to every strategy, parametrised — that is the whole reason offsets were the contract.
 
 Shared properties, run against all four strategies:
 1. Spans tile the text: no gaps, each span starts at or before the previous span's end.
@@ -86,21 +86,21 @@ Registry:
 17. `STRATEGIES` has exactly the four keys; `chunk_documents(..., strategy="nope")` raises with the valid names in the message.
 18. `chunk_document(..., strategy="recursive")` is byte-identical to today's output — the baseline must not move by accident.
 
-- [ ] **Step 2: Write the splitters.** Reuse `_protected_spans`, `_skip_protected`, `_boundary` and `_merge`; three of the four are packing loops over an existing helper. Keep `split_text` exactly as it is and register it as `recursive`.
+- [x] **Step 2: Write the splitters.** Reuse `_protected_spans`, `_skip_protected`, `_boundary` and `_merge`; three of the four are packing loops over an existing helper. Keep `split_text` exactly as it is and register it as `recursive`.
 
-- [ ] **Step 3: Green.** `uv run pytest tests/test_ingestion_chunk.py`. Commit: `feat(ingestion): add fixed, sentence and semantic chunking`.
+- [x] **Step 3: Green.** `uv run pytest tests/test_ingestion_chunk.py`. Commit: `feat(ingestion): add fixed, sentence and semantic chunking`.
 
 ### Task 2: Plumbing — collection and strategy through the CLIs
 
-- [ ] **Step 1: Failing tests.** `search(query, collection="other")` queries `other` and not `settings.qdrant_collection`; omitting it falls back to settings. Fake client, as in the existing search tests.
+- [x] **Step 1: Failing tests.** `search(query, collection="other")` queries `other` and not `settings.qdrant_collection`; omitting it falls back to settings. Fake client, as in the existing search tests.
 
-- [ ] **Step 2: Thread the arguments.**
+- [x] **Step 2: Thread the arguments.**
   - `search(..., collection: str | None = None)`.
   - `index_corpus.py`: `--strategy` (default from settings), `--collection` (default from settings), `--chunk-size`, `--overlap`. Print the strategy in the summary line — a run whose parameters are not on screen is a run you cannot attribute later.
   - `benchmark.py`: `--collection`, and `"strategy"` added to the recorded `config` dict alongside the `chunk_size`/`chunk_overlap` already there.
   - `config.py`: `chunk_strategy: str = "recursive"`; `.env.example` gets `CHUNK_STRATEGY=recursive` with a one-line comment.
 
-- [ ] **Step 3: Green plus a smoke run.**
+- [x] **Step 3: Green plus a smoke run.**
 
 ```powershell
 uv run python scripts/index_corpus.py --strategy sentence --limit 5 --dry-run
@@ -110,17 +110,17 @@ Commit: `feat(ingestion): select chunking strategy and collection per run`.
 
 ### Task 3: The summary table
 
-- [ ] **Step 1: Failing test.** `--summary` over a two-row fake history prints both labels with their Recall@5, and a glob matching nothing exits non-zero with a message rather than printing an empty table.
+- [x] **Step 1: Failing test.** `--summary` over a two-row fake history prints both labels with their Recall@5, and a glob matching nothing exits non-zero with a message rather than printing an empty table.
 
-- [ ] **Step 2: Write it.** `--summary <glob>` reads `data/eval/results.jsonl`, keeps the last run per matching label, and prints one table: label, strategy, chunk_size, overlap, Recall@5, Recall@10, MRR, NDCG@5, conceptual Recall@5, p50 ms. Reuse the existing `table()` helper.
+- [x] **Step 2: Write it.** `--summary <glob>` reads `data/eval/results.jsonl`, keeps the last run per matching label, and prints one table: label, strategy, chunk_size, overlap, Recall@5, Recall@10, MRR, NDCG@5, conceptual Recall@5, p50 ms. Reuse the existing `table()` helper.
 
-- [ ] **Step 3: Green.** Commit: `feat(evaluation): summarise benchmark history by label`.
+- [x] **Step 3: Green.** Commit: `feat(evaluation): summarise benchmark history by label`.
 
 ### Task 4: Run the matrix
 
 Qdrant up first: `docker compose up -d qdrant --wait`.
 
-- [ ] **Step 1: Round 1 — four strategies at 1000/200.**
+- [x] **Step 1: Round 1 — four strategies at 1000/200.**
 
 ```powershell
 foreach ($s in "recursive","fixed","sentence","semantic") {
@@ -132,9 +132,9 @@ uv run python scripts/benchmark.py --summary "chunk-*"
 
 Record the chunk count per strategy from the indexer's summary line — it is half the explanation of any Recall difference, and it is not in `results.jsonl` otherwise.
 
-- [ ] **Step 2: Apply the decision rule.** Highest overall Recall@5; ties inside 0.026 broken by `conceptual` Recall@5. Write the winner down before running anything else.
+- [x] **Step 2: Apply the decision rule.** Highest overall Recall@5; ties inside 0.026 broken by `conceptual` Recall@5. Write the winner down before running anything else.
 
-- [ ] **Step 3: Round 2 — size sweep on the winner.** 1000 is already done.
+- [x] **Step 3: Round 2 — size sweep on the winner.** 1000 is already done.
 
 ```powershell
 foreach ($n in 500,1500) {
@@ -143,21 +143,21 @@ foreach ($n in 500,1500) {
 }
 ```
 
-- [ ] **Step 4: Round 3 — overlap, only if round 2 earned it.** If the spread across 500/1000/1500 is below 0.026, stop and say so in the README: the corpus is insensitive to chunk size in this range, which is itself a finding. Otherwise run overlap 0 and 400 at the best size.
+- [x] **Step 4: Round 3 — overlap, only if round 2 earned it.** If the spread across 500/1000/1500 is below 0.026, stop and say so in the README: the corpus is insensitive to chunk size in this range, which is itself a finding. Otherwise run overlap 0 and 400 at the best size.
 
-- [ ] **Step 5: Read the per-category tables, not just the aggregate.** Things worth checking against reality, and worth writing down whichever way they land:
+- [x] **Step 5: Read the per-category tables, not just the aggregate.** Things worth checking against reality, and worth writing down whichever way they land:
   - `fixed` should lose, and most visibly on `code` — it is the only strategy allowed to cut a fence open. If it does not lose, the other three are doing work the corpus does not reward, and that is the headline.
   - `semantic` should help `conceptual` most, since that is the category whose answers span a whole explanatory passage. If it helps `exact` instead, the threshold is cutting on formatting rather than on meaning.
   - Smaller chunks usually raise Recall@5 and lower precision, because more documents fit in five slots. If Recall@5 rises while `hit_rate@5` is flat, the gain is dedup arithmetic, not better retrieval — say so.
   - If no strategy beats `dense-baseline` by more than 0.026, **the baseline wins and step 12's result is "chunking is not the bottleneck here"**. That is a publishable outcome and the correct one to publish; it makes the case for step 14 stronger, not weaker.
 
-- [ ] **Step 6: Commit the results.** `feat(evaluation): benchmark four chunking strategies` with the new `results.jsonl` rows.
+- [x] **Step 6: Commit the results.** `feat(evaluation): benchmark four chunking strategies` with the new `results.jsonl` rows.
 
 ### Task 5: Promote the winner
 
-- [ ] **Step 1: Rewire the default.** `chunk_strategy` and, if the sweep moved them, `chunk_size`/`chunk_overlap` in `config.py` and `.env.example`.
+- [x] **Step 1: Rewire the default.** `chunk_strategy` and, if the sweep moved them, `chunk_size`/`chunk_overlap` in `config.py` and `.env.example`.
 
-- [ ] **Step 2: Reindex the primary collection and re-benchmark.**
+- [x] **Step 2: Reindex the primary collection and re-benchmark.**
 
 ```powershell
 uv run python scripts/index_corpus.py --recreate
@@ -166,7 +166,7 @@ uv run python scripts/benchmark.py --label "dense-<winner>" --compare "dense-bas
 
 This row, not `dense-baseline`, is what steps 13-30 compare against. Losing collections stay on disk until step 14 wants the space.
 
-- [ ] **Step 3: Sanity-check the pipeline end to end**, because a chunking change touches every answer, not just every score:
+- [x] **Step 3: Sanity-check the pipeline end to end**, because a chunking change touches every answer, not just every score:
 
 ```powershell
 uv run python scripts/ask.py "Comment FastAPI gere les dependances avec Depends ?"
@@ -175,14 +175,14 @@ uv run python scripts/ask.py "HTTPException 422"
 
 Citations must still resolve (step 09) and the out-of-corpus question must still answer "I do not know". A chunking strategy that raises Recall@5 while breaking citation resolution is a regression, and the benchmark cannot see it.
 
-- [ ] **Step 4: Commit.** `feat(ingestion): promote <winner> chunking as the default`.
+- [x] **Step 4: Commit.** `feat(ingestion): promote <winner> chunking as the default`.
 
 ### Task 6: Documentation
 
-- [ ] **Step 1: README.** The four-strategy table, the size sweep, the per-category deltas against `dense-baseline`, the new commands, the roadmap checkbox. Publish the losers with their numbers — a table with only the winner in it is marketing.
-- [ ] **Step 2: The parent-child note.** One short paragraph: what it is, why a document-level Recall@5 cannot distinguish it, which step measures it instead. This is the most interesting thing the step learns and it belongs in the README, not only in this plan.
-- [ ] **Step 3: Fix `docs/roadmap.md`.** Its "Current state" section still says steps 02-08 are done and step 09 is next; 09, 10 and 11 shipped and `v0.4` is tagged. Bring it up to date, add step 12's row, and add this plan to the plans table.
-- [ ] **Step 4: Commit.** `docs: publish the chunking comparison`.
+- [x] **Step 1: README.** The four-strategy table, the size sweep, the per-category deltas against `dense-baseline`, the new commands, the roadmap checkbox. Publish the losers with their numbers — a table with only the winner in it is marketing.
+- [x] **Step 2: The parent-child note.** One short paragraph: what it is, why a document-level Recall@5 cannot distinguish it, which step measures it instead. This is the most interesting thing the step learns and it belongs in the README, not only in this plan.
+- [x] **Step 3: Fix `docs/roadmap.md`.** Its "Current state" section still says steps 02-08 are done and step 09 is next; 09, 10 and 11 shipped and `v0.4` is tagged. Bring it up to date, add step 12's row, and add this plan to the plans table.
+- [x] **Step 4: Commit.** `docs: publish the chunking comparison`.
 
 ## Verification
 
