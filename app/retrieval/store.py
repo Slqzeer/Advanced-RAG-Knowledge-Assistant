@@ -18,9 +18,9 @@ from app.models.chunks import Chunk
 # A constant, never uuid1/uuid4: point ids must be the same on every machine and
 # every run, or idempotence is gone.
 NAMESPACE = uuid.UUID("1f1e7a64-0b9e-5c33-9f0e-2a6c4d8b1e77")
-# Indexed now, two lines, so step 13's metadata filtering is a query-time change
-# instead of a re-index. Unfiltered payload filters still work but scan.
-INDEXED_FIELDS = ("source", "document_id", "language")
+# Indexed keyword fields. Anything filterable must be here: an unindexed filter
+# still works but scans, and search.build_filter() rejects keys that are not.
+INDEXED_FIELDS = ("source", "document_id", "language", "doc_type")
 BATCH_SIZE = 256
 
 

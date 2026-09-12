@@ -11,6 +11,7 @@ def make_chunk() -> Chunk:
         title="Dependencies",
         url="https://fastapi.tiangolo.com/tutorial/dependencies/",
         section="First steps",
+        doc_type="tutorial",
         chunk_index=0,
         text="Depends() declares a dependency.",
         char_start=0,
@@ -40,3 +41,7 @@ def test_the_optional_payload_fields_default_to_none() -> None:
     restored = Chunk.model_validate(payload)
     assert restored.url is None
     assert restored.section is None
+
+
+def test_the_payload_carries_doc_type() -> None:
+    assert make_chunk().to_payload()["doc_type"] == "tutorial"

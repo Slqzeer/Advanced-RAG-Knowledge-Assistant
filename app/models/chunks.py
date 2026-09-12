@@ -14,6 +14,9 @@ class Chunk(BaseModel):
     source: str
     title: str
     url: str | None = None
+    # Required, no default: a payload written before step 13 must fail loudly in
+    # chunk_from_payload rather than report a made-up facet into a benchmark row.
+    doc_type: str
     language: str = "en"
     section: str | None = None
     chunk_index: int = Field(ge=0)

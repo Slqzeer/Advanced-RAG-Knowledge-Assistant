@@ -19,6 +19,7 @@ def make_payload(index: int, **overrides: Any) -> dict[str, Any]:
         source="fastapi",
         title="Dependencies",
         url="https://fastapi.tiangolo.com/tutorial/dependencies/",
+        doc_type="tutorial",
         section="First steps",
         chunk_index=index,
         text=f"chunk body number {index}",
@@ -164,12 +165,18 @@ CORPUS = [
 ]
 
 
+# Distinct facets, one per CORPUS entry: a doc_type filter test whose fixtures
+# all share a facet passes just as well with the filter switched off.
+DOC_TYPES = ("tutorial", "deployment", "about")
+
+
 def real_chunk(index: int, text: str) -> Chunk:
     return Chunk(
         document_id=f"fastapi:doc-{index}",
         source="fastapi",
         title=f"Document {index}",
         url=None,
+        doc_type=DOC_TYPES[index],
         section=None,
         chunk_index=0,
         text=text,

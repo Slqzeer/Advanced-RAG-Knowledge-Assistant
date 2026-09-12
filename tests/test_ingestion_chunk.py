@@ -63,6 +63,7 @@ def chunk(**overrides: object) -> Chunk:
         "document_id": "fastapi:index",
         "source": "fastapi",
         "title": "FastAPI",
+        "doc_type": "root",
         "url": None,
         "section": "Dependencies",
         "chunk_index": 3,
@@ -410,3 +411,16 @@ def test_recursive_is_byte_identical_to_the_step_11_baseline() -> None:
     chunks = chunk_document(document(text), strategy="recursive")
     kept = [span for span in spans if text[slice(*span)].strip()]
     assert [(c.char_start, c.char_end) for c in chunks] == kept
+
+
+def test_chunks_inherit_the_documents_doc_type() -> None:
+    chunks = chunk_document(
+        document(
+            sentences(60),
+            document_id="fastapi:deployment/docker",
+            path="deployment/docker.md",
+            doc_type="deployment",
+        )
+    )
+    assert chunks
+    assert {chunk.doc_type for chunk in chunks} == {"deployment"}

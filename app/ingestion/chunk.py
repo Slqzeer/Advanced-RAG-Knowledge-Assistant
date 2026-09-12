@@ -379,6 +379,7 @@ def chunk_document(
                 source=document.source,
                 title=document.title,
                 url=document.url,
+                doc_type=document.doc_type,
                 language=document.language,
                 section=next((t for p, t in reversed(headings) if p <= start), None),
                 chunk_index=len(chunks),

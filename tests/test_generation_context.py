@@ -12,6 +12,7 @@ def scored(rank: int, text: str = "body", **overrides: object) -> ScoredChunk:
         "source": "fastapi",
         "title": "Dependencies",
         "url": "https://fastapi.tiangolo.com/tutorial/dependencies/",
+        "doc_type": "tutorial",
         "section": "First steps",
         "chunk_index": 0,
         "text": text,

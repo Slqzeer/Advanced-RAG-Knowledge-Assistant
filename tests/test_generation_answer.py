@@ -18,6 +18,7 @@ def scored(rank: int, text: str = "body") -> ScoredChunk:
         source="fastapi",
         title="Dependencies",
         url=None,
+        doc_type="tutorial",
         section="First steps",
         chunk_index=0,
         text=text,

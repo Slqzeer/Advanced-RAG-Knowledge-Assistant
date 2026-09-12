@@ -23,6 +23,7 @@ def make_chunk(index: int) -> Chunk:
         source="fastapi",
         title="First Steps",
         url="https://fastapi.tiangolo.com/tutorial/first-steps/",
+        doc_type="tutorial",
         language="en",
         section="Check it",
         chunk_index=index,
@@ -142,3 +143,7 @@ def test_a_stored_point_keeps_its_text_and_metadata(client: QdrantClient, collec
     [record] = client.retrieve(collection, ids=[point_id(CHUNKS[1].chunk_id)], with_payload=True)
     assert record.payload is not None
     assert chunk_from_payload(record.payload) == CHUNKS[1]
+
+
+def test_doc_type_is_a_payload_indexed_field() -> None:
+    assert "doc_type" in INDEXED_FIELDS

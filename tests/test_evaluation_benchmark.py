@@ -15,6 +15,7 @@ def chunk(document_id: str, index: int = 0) -> Chunk:
         document_id=document_id,
         source="fastapi",
         title=document_id,
+        doc_type="tutorial",
         chunk_index=index,
         text="body",
         char_start=0,
