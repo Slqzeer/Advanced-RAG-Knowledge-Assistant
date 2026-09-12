@@ -8,7 +8,7 @@ from qdrant_client import QdrantClient
 from app.core.config import Settings, get_settings
 from app.models.chunks import Chunk, ScoredChunk
 from app.retrieval.bm25 import BM25Index
-from app.retrieval.search import parse_filters, search
+from app.retrieval.search import matches_filters, parse_filters, search
 from app.retrieval.store import chunk_from_payload, ensure_collection, get_client, upsert_chunks
 
 SETTINGS = Settings(qdrant_collection="chunks", openai_api_key=None, retrieval_mode="dense")
@@ -366,3 +366,94 @@ def test_the_mode_falls_back_to_the_settings() -> None:
         top_k=1,
     )
     assert client.calls == []
+
+
+# --- filters on the lexical branch (step 15) ------------------------------
+
+
+def filtered_index() -> BM25Index:
+    return BM25Index(
+        [
+            Chunk.model_validate(
+                make_payload(0, text="error in a tutorial", doc_type="tutorial", source="fastapi")
+            ),
+            Chunk.model_validate(
+                make_payload(1, text="error in a reference", doc_type="reference", source="fastapi")
+            ),
+            Chunk.model_validate(
+                make_payload(2, text="error in starlette", doc_type="tutorial", source="starlette")
+            ),
+        ]
+    )
+
+
+def test_matches_filters_accepts_a_scalar_match() -> None:
+    chunk = Chunk.model_validate(make_payload(0, doc_type="tutorial"))
+    assert matches_filters(chunk, {"doc_type": "tutorial"})
+    assert not matches_filters(chunk, {"doc_type": "reference"})
+
+
+def test_matches_filters_accepts_any_of_a_sequence() -> None:
+    chunk = Chunk.model_validate(make_payload(0, doc_type="tutorial"))
+    assert matches_filters(chunk, {"doc_type": ["tutorial", "advanced"]})
+    assert not matches_filters(chunk, {"doc_type": ["reference", "advanced"]})
+
+
+def test_matches_filters_ands_several_keys() -> None:
+    chunk = Chunk.model_validate(make_payload(0, doc_type="tutorial", source="fastapi"))
+    assert matches_filters(chunk, {"doc_type": "tutorial", "source": "fastapi"})
+    assert not matches_filters(chunk, {"doc_type": "tutorial", "source": "starlette"})
+
+
+def test_matches_filters_with_no_filters_matches_everything() -> None:
+    chunk = Chunk.model_validate(make_payload(0))
+    assert matches_filters(chunk, None)
+    assert matches_filters(chunk, {})
+
+
+def test_matches_filters_rejects_an_unindexed_key_like_build_filter_does() -> None:
+    """The two translations must accept and reject exactly the same mappings."""
+    chunk = Chunk.model_validate(make_payload(0))
+    with pytest.raises(ValueError, match="doctype"):
+        matches_filters(chunk, {"doctype": "tutorial"})
+
+
+def test_matches_filters_rejects_an_empty_value_list_like_build_filter_does() -> None:
+    chunk = Chunk.model_validate(make_payload(0))
+    with pytest.raises(ValueError, match="doc_type"):
+        matches_filters(chunk, {"doc_type": []})
+
+
+def test_lexical_mode_honours_a_scalar_filter() -> None:
+    results = run(
+        "error",
+        mode="lexical",
+        index=filtered_index(),
+        filters={"doc_type": "reference"},
+        top_k=5,
+    )
+    assert [scored.chunk.doc_type for scored in results] == ["reference"]
+
+
+def test_lexical_mode_honours_a_sequence_filter() -> None:
+    results = run(
+        "error", mode="lexical", index=filtered_index(), filters={"source": ["starlette"]}, top_k=5
+    )
+    assert [scored.chunk.source for scored in results] == ["starlette"]
+
+
+def test_lexical_mode_ands_two_filters() -> None:
+    results = run(
+        "error",
+        mode="lexical",
+        index=filtered_index(),
+        filters={"doc_type": "tutorial", "source": "fastapi"},
+        top_k=5,
+    )
+    assert [scored.chunk.chunk_index for scored in results] == [0]
+
+
+def test_lexical_mode_rejects_an_unindexed_filter_key_before_searching() -> None:
+    """Eagerly, not once per candidate chunk: a typo must fail the call."""
+    with pytest.raises(ValueError, match="doctype"):
+        run("error", mode="lexical", index=filtered_index(), filters={"doctype": "tutorial"})

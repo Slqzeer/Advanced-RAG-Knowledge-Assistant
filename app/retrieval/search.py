@@ -14,7 +14,7 @@ from qdrant_client.models import Condition, FieldCondition, Filter, MatchAny, Ma
 
 from app.core.config import Settings, get_settings
 from app.ingestion.embed import EmbeddingCache, embed_query
-from app.models.chunks import ScoredChunk
+from app.models.chunks import Chunk, ScoredChunk
 from app.retrieval.bm25 import BM25Index, default_index
 from app.retrieval.store import INDEXED_FIELDS, chunk_from_payload, get_client
 
@@ -58,6 +58,28 @@ def build_filter(filters: Filters | None) -> Filter | None:
         else:
             conditions.append(FieldCondition(key=key, match=MatchAny(any=list(value))))
     return Filter(must=conditions)
+
+
+def matches_filters(chunk: Chunk, filters: Filters | None) -> bool:
+    """``build_filter``'s twin for the lexical branch: the same mapping, applied
+    in Python because a BM25 index has no server to push a filter to.
+
+    Kept beside ``build_filter`` and sharing ``_check_filters`` on purpose. Two
+    translations of one mapping living in different modules is how one of them
+    grows support for a key the other silently ignores, and a filter that half
+    applies is worse than one that fails.
+    """
+    if not filters:
+        return True
+    _check_filters(filters)
+    for key, value in filters.items():
+        actual = getattr(chunk, key)
+        if isinstance(value, str):
+            if actual != value:
+                return False
+        elif actual not in list(value):
+            return False
+    return True
 
 
 def parse_filters(pairs: Sequence[str]) -> dict[str, list[str]]:
@@ -114,8 +136,14 @@ def _dense(
 def _lexical(
     query: str, *, top_k: int, filters: Filters | None, index: BM25Index, **_: Any
 ) -> list[ScoredChunk]:
-    """BM25 over the same chunks, no vector and no server round trip."""
-    return index.search(query, top_k)
+    """BM25 over the same chunks, no vector and no server round trip.
+
+    Filters are validated once here rather than per candidate chunk, so a
+    misspelled key fails the call instead of quietly matching nothing.
+    """
+    if filters:
+        _check_filters(filters)
+    return index.search(query, top_k, predicate=lambda chunk: matches_filters(chunk, filters))
 
 
 Retrieve = Callable[..., list[ScoredChunk]]
