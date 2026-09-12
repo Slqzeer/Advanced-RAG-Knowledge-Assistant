@@ -11,6 +11,7 @@
 - [Indexation Qdrant](#indexation-qdrant)
 - [Recherche vectorielle](#recherche-vectorielle)
 - [Génération de réponses](#génération-de-réponses)
+- [Citations](#citations)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -30,7 +31,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Phase 1 terminée, étape 08 — RAG minimal (`v0.2`).** La boucle est fermée : une question entre, une réponse fondée sur le corpus sort, avec ses sources, ses statistiques de retrieval, ses tokens et sa latence. Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, et désormais **répondable**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Phase 10 terminée, étape 09 — Citations (`v0.3`).** La boucle est fermée et désormais **vérifiable** : une question entre, une réponse fondée sur le corpus sort, et chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni. Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, et **sourcé pour de bon**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -46,7 +47,8 @@ Fonctionnalités disponibles :
 - configuration partagée via `app.core.config` : une classe `Settings` lue une seule fois, qui charge `.env` ;
 - indexation dans Qdrant via `app.retrieval.store` et `scripts/index_corpus.py` : 1 607 points, distance cosinus, index de payload sur `source`, `document_id` et `language` ;
 - recherche par similarité via `app.retrieval.search` et `scripts/search.py` : `search()` rend des `ScoredChunk` classés à partir du rang 1, 119 ms sur requête déjà vectorisée ;
-- génération de réponses via `app.generation` et `scripts/ask.py` : contexte numéroté, appel au modèle à `temperature=0`, objet `Answer` avec sources, statistiques, tokens et latence ; 1,5 à 3,7 s de bout en bout, 851 à 1 021 tokens par question.
+- génération de réponses via `app.generation` et `scripts/ask.py` : contexte numéroté, appel au modèle à `temperature=0`, objet `Answer` avec sources, statistiques, tokens et latence ; 1,5 à 3,7 s de bout en bout, 851 à 1 021 tokens par question ;
+- validation des citations via `app.generation.citations` : chaque `[n]` est analysé puis confronté au contexte fourni, les sources rendues sont le sous-ensemble réellement cité, renuméroté de 1 dans le texte **et** dans la liste.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
@@ -186,23 +188,30 @@ fonctionner. FastAPI s'occupe ensuite de fournir ces dépendances en les
 
 Lorsqu'une nouvelle requête arrive, FastAPI appelle la fonction de dépendance avec
 les paramètres appropriés, obtient le résultat de cette fonction et l'assigne au
-paramètre de votre fonction d'opération de chemin [4]. Cela permet de partager la
-logique de code et les connexions à la base de données, d'appliquer des exigences
-de sécurité et d'authentification, tout en minimisant la répétition [2].
+paramètre de votre fonction d'opération de chemin [3]. De plus, FastAPI utilise
+des gestionnaires de contexte de Python pour s'assurer que tout est exécuté dans
+le bon ordre, même si une dépendance nécessite plusieurs autres dépendances [4].
+
+Ce système permet de partager la logique de code, de partager des connexions à la
+base de données, d'appliquer des exigences de sécurité et d'authentification, tout
+en minimisant la répétition de code [2].
 
 [1] Dependencies  (0.6773)
     https://fastapi.tiangolo.com/tutorial/dependencies/
 [2] Dependencies  (0.6319)
     https://fastapi.tiangolo.com/tutorial/dependencies/
-[3] Dependencies with yield / Sub-dependencies with `yield`  (0.6309)
+[3] Dependencies / Declare the dependency, in the "dependant"  (0.6102)
+    https://fastapi.tiangolo.com/tutorial/dependencies/
+[4] Dependencies with yield / Sub-dependencies with `yield`  (0.6309)
     https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/
-[4] Dependencies / Declare the dependency, in the "dependant"  (0.6102)
-    https://fastapi.tiangolo.com/tutorial/dependencies/
-[5] Dependencies / Simple usage  (0.6086)
-    https://fastapi.tiangolo.com/tutorial/dependencies/
 
-5 retrieved, 5 used, 0 dropped  |  gpt-4o-mini  |  1021 tokens  |  3697 ms
+5 retrieved, 5 used, 0 dropped, 4 cited  |  gpt-4o-mini  |  1055 tokens  |  3357 ms
 ```
+
+Cinq chunks sont partis au modèle, quatre reviennent : le cinquième n'a été cité
+nulle part, donc il n'est pas présenté comme une source. Et la liste n'est plus
+triée par score — `[4]` score plus haut que `[3]` — parce qu'elle suit désormais
+l'ordre des citations dans le texte. Le détail est dans [Citations](#citations).
 
 **Corpus anglais, question française, réponse française.** Le prompt système impose la langue de la question. Sans cette ligne, le système répond en anglais à une question française et paraît cassé.
 
@@ -219,6 +228,96 @@ de sécurité et d'authentification, tout en minimisant la répétition [2].
 **Les tokens sont relevés dès le premier appel.** L'étape 24 en a besoin ; les ajouter plus tard voudrait dire toucher tous les appelants.
 
 Les vingt-trois tests de l'étape tournent sans serveur, sans clé et sans dépense : le récupérateur et le modèle sont injectables.
+
+## Citations
+
+Deux garanties, tenues par du code et non par un prompt :
+
+1. **Chaque `[n]` d'une réponse rendue pointe vers une source rendue.**
+2. **Chaque source rendue a été effectivement citée.**
+
+Le texte et la liste sont renumérotés ensemble : si le modèle cite `[1]` et `[3]`,
+la réponse dit `[1]` et `[2]`, et les deux sources portent les numéros 1 et 2. La
+liste suit donc l'ordre des citations, pas l'ordre des scores.
+
+```text
+> uv run python scripts/ask.py "What does Depends() with yield do differently?"
+
+Using `Depends()` with `yield` allows for dependencies that perform additional
+steps after finishing. Specifically, the exit code after `yield` is executed at
+different times depending on the scope specified. If you use
+`Depends(scope="function")`, the exit code runs right after the path operation
+function is finished, before the response is sent back to the client. In contrast,
+using `Depends(scope="request")` (the default) means the exit code runs after the
+response is sent [1].
+
+Additionally, dependencies with `yield` can handle exceptions and ensure that exit
+steps are executed regardless of whether an exception occurred, by using `try` and
+`finally` blocks [2].
+
+[1] Advanced Dependencies / Dependencies with `yield`, `HTTPException`, `except` and Background Tasks  (0.5497)
+    https://fastapi.tiangolo.com/advanced/advanced-dependencies/
+[2] Dependencies with yield / A database dependency with `yield`  (0.5049)
+    https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/
+
+5 retrieved, 5 used, 0 dropped, 2 cited  |  gpt-4o-mini  |  1289 tokens  |  1993 ms
+```
+
+Cinq chunks retrouvés, cinq envoyés au modèle, deux cités. `retrieved` et `used`
+restent des faits de *retrieval* — les compter à partir des citations ferait
+passer un modèle paresseux pour un moteur de recherche défaillant. Seul `sources`
+rétrécit.
+
+**Une citation hors plage est un bug de la réponse, pas de l'analyseur.** `[7]`
+quand cinq entrées ont été fournies veut dire que le modèle a inventé une source.
+Le marqueur est retiré du texte, l'espace qu'il occupait avec lui, et un
+avertissement le nomme. Il n'est **jamais** renuméroté : faire pointer une
+affirmation fabriquée vers un document réel est le pire résultat disponible. Le
+mode `--strict` lève une exception à la place, pour les campagnes d'évaluation où
+un avertissement silencieux fausserait la métrique de l'étape 21.
+
+**Une réponse sans citation est signalée, pas rejetée.** Un vrai refus n'a rien à
+citer et c'est la bonne réponse : zéro citation plus une formule de refus, tout va
+bien. Zéro citation plus une réponse longue et assurée, c'est un avertissement
+`answer_without_citations` — de la génération non fondée déguisée en RAG.
+
+**Le code et les liens ne sont pas des citations.** `list[int]` dans un bloc
+clôturé et `[the docs](https://x)` dans une phrase passent par le masquage des
+motifs `CODE` et `LINK` de l'étape 03 avant toute analyse. Sans cela, chaque lien
+d'une réponse devient une fausse source, ce qui est précisément le défaut que
+cette étape existe pour supprimer.
+
+### Ce que cite vraiment `gpt-4o-mini`
+
+Sept questions passées au modèle réel, chaque `[n]` rouvert et relu contre le
+chunk qu'il désigne. Les citations résolvent toutes ; leur *pertinence* est une
+autre affaire, et c'est la cible de l'étape 21.
+
+| Mode observé | Fréquence | Exemple |
+|---|---|---|
+| Citation exacte et vérifiable | majoritaire | « Python's Context Managers » cité sur le chunk qui contient littéralement la phrase |
+| Phrase factuelle non citée du tout | 3 réponses sur 5 | la phrase d'ouverture de la réponse `Depends()`/`yield` n'a aucun marqueur |
+| Citation groupée sur une phrase composée | 2 réponses sur 5 | `[1][2][3]` sur une phrase dont chaque proposition vient d'une entrée différente : correct, mais la granularité est la phrase, pas la proposition |
+| Paraphrase qui perd une condition du chunk | 1 réponse sur 5 | `Depends(scope="function")` présenté comme disponible, le chunk précise « In version 0.121.0 » |
+| Redite d'une phrase déjà citée, recitée | 1 réponse sur 5 | « path parameters are directly included in the URL structure » reformule la phrase précédente et recite `[2][3]` |
+
+Aucune citation inventée sur ces sept questions — mais l'échantillon est de sept,
+et le garde-fou existe justement parce que l'échantillon suivant sera différent.
+
+**Le trou réel est la phrase non citée, pas la citation fausse.** L'avertissement
+ne se déclenche que si la réponse *entière* ne cite rien ; une réponse qui cite
+trois phrases sur cinq passe sans bruit. L'attribution phrase par phrase est
+délibérément laissée à l'étape 21, avec le score de fidélité qui l'accompagne.
+
+**Un faux refus est un échec de retrieval, pas de citation.** « How do I return a
+422 validation error ? » refuse proprement, avec zéro source et zéro
+avertissement — exactement le comportement voulu, sur un contexte qui n'aurait pas
+dû être vide. C'est le constat `HTTPException 422` de l'étape 07 qui se repaie, et
+la cible de la recherche hybride de l'étape 14.
+
+**`--show-context` ne numérote plus comme la réponse.** L'option affiche le prompt
+envoyé, donc la numérotation d'origine ; la réponse, elle, est renumérotée. Pour
+auditer un `[n]`, il faut passer par le titre de la source, pas par son numéro.
 
 ## Premiers constats
 
@@ -347,6 +446,9 @@ uv run python scripts/search.py "HTTPException 422" --top-k 10 --source fastapi
 uv run python scripts/ask.py "How does dependency injection work in FastAPI?"
 uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?" --show-context
 
+# Échouer sur une citation inventée au lieu de l'avertir (campagnes d'évaluation)
+uv run python scripts/ask.py "What does Depends() with yield do differently?" --strict
+
 # Tests d'intégration Qdrant (ignorés si le serveur n'est pas joignable)
 uv run pytest -m requires_qdrant
 
@@ -364,7 +466,7 @@ docker compose down
 │   ├── api/          # future API FastAPI
 │   ├── core/         # configuration partagée
 │   ├── evaluation/   # futures métriques RAG
-│   ├── generation/   # contexte, appel au modèle, orchestration
+│   ├── generation/   # contexte, appel au modèle, citations, orchestration
 │   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
 │   └── retrieval/    # indexation Qdrant et recherche par similarité
@@ -392,7 +494,7 @@ docker compose down
 - [ ] **Phase 7 — Query rewriting** : rendre les questions conversationnelles autonomes.
 - [ ] **Phase 8 — Multi-query retrieval** : augmenter le recall par expansion de requêtes.
 - [ ] **Phase 9 — Compression contextuelle** : réduire le contexte aux passages pertinents.
-- [ ] **Phase 10 — Citations** : produire des réponses fondées et sourcées.
+- [x] **Phase 10 — Citations** : produire des réponses fondées et sourcées (faites, `v0.3`).
 - [ ] **Phase 11 — Évaluation complète** : mesurer retrieval et génération.
 - [ ] **Phase 12 — Guardrails** : gérer le manque de contexte et les entrées hostiles.
 - [ ] **Phase 13 — Cache** : réduire latence et coût.
@@ -409,6 +511,7 @@ Les résultats seront ajoutés avec les phases correspondantes. Une valeur absen
 |---|---:|---:|---:|---:|---:|
 | Recherche vectorielle naïve | — | — | — | 119 ms* | — |
 | RAG minimal (`v0.2`) | — | — | — | 1,5 à 3,7 s** | ~0,0003 $ / question** |
+| Citations (`v0.3`) | — | — | — | 0,7 à 4,3 s*** | ~0,0003 $ / question*** |
 | Chunking amélioré | — | — | — | — | — |
 | Recherche hybride | — | — | — | — | — |
 | Reranking | — | — | — | — | — |
@@ -416,6 +519,8 @@ Les résultats seront ajoutés avec les phases correspondantes. Une valeur absen
 \* Latence de recherche seule, vecteur de requête déjà en cache ; 0,9 à 1,8 s quand il faut le calculer. Les métriques de qualité arrivent avec l'étape 11, qui construit le jeu d'évaluation.
 
 \*\* Bout en bout via `scripts/ask.py`, sur quatre questions réelles : 851 à 1 021 tokens par appel à `gpt-4o-mini`, soit environ 0,0003 $ l'unité aux tarifs affichés. La génération domine, elle pèse plus de 95 % du temps de réponse.
+
+\*\*\* Sept questions réelles, 923 à 1 289 tokens par appel. La validation des citations est du traitement de chaîne en mémoire et ne se mesure pas à côté de l'aller-retour réseau ; la fourchette s'élargit vers le bas parce qu'un refus est court à générer, et vers le haut parce que le prompt v2 est plus long que le v1. Les métriques de qualité restent vides jusqu'à l'étape 11.
 
 ## Qualité et CI
 
