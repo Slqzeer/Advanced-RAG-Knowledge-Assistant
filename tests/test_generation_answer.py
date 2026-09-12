@@ -54,14 +54,26 @@ def ask(question: str = "How do dependencies work?", **kwargs: Any) -> Answer:
     return answer_question(question, **kwargs)
 
 
-def test_the_sources_are_the_retrieved_chunks_in_rank_order() -> None:
-    answer = ask()
-    assert [source.document_id for source in answer.sources] == [
-        "fastapi:doc-1",
-        "fastapi:doc-2",
-        "fastapi:doc-3",
-    ]
-    assert [source.index for source in answer.sources] == [1, 2, 3]
+def test_the_sources_are_the_cited_chunks_in_citation_order() -> None:
+    """Step 09 changed this contract: step 08 returned all three retrieved chunks,
+    which overstates provenance when the answer used one. What was retrieved is
+    still reported, in ``retrieval``, where it is a retrieval fact."""
+    answer = ask(llm=FakeLLM("Caching first [2], then Depends() [1]."))
+    assert [source.document_id for source in answer.sources] == ["fastapi:doc-2", "fastapi:doc-1"]
+    assert [source.index for source in answer.sources] == [1, 2]
+    assert answer.answer == "Caching first [1], then Depends() [2]."
+
+
+def test_an_invented_citation_is_stripped_and_warned_about() -> None:
+    answer = ask(llm=FakeLLM("Depends() [1] caches [9]."))
+    assert answer.answer == "Depends() [1] caches."
+    assert len(answer.sources) == 1
+    assert answer.warnings and "9" in answer.warnings[0]
+
+
+def test_strict_mode_turns_that_warning_into_a_failure() -> None:
+    with pytest.raises(ValueError, match=r"\[9\]"):
+        ask(llm=FakeLLM("Depends() [1] caches [9]."), strict=True)
 
 
 def test_the_retrieval_stats_match_what_reached_the_model() -> None:
@@ -75,9 +87,27 @@ def test_the_retrieval_stats_match_what_reached_the_model() -> None:
 
 def test_dropped_chunks_are_counted_and_not_cited() -> None:
     retriever = FakeRetriever([scored(i, "x" * 100) for i in (1, 2, 3)])
-    answer = ask(retriever=retriever, max_context_chars=300)
+    answer = ask(retriever=retriever, max_context_chars=300, llm=FakeLLM("Both [1][2]."))
     assert (answer.retrieval.used, answer.retrieval.dropped) == (2, 1)
-    assert len(answer.sources) == 2
+    assert [source.document_id for source in answer.sources] == ["fastapi:doc-1", "fastapi:doc-2"]
+
+
+def test_the_stats_count_what_reached_the_model_not_what_was_cited() -> None:
+    """``used`` is a retrieval fact. Deriving it from the citation count would
+    make a model that cites lazily look like a retriever that returned less."""
+    answer = ask(llm=FakeLLM("Only the first one [1]."))
+    assert (answer.retrieval.retrieved, answer.retrieval.used, answer.retrieval.dropped) == (
+        3,
+        3,
+        0,
+    )
+    assert len(answer.sources) == 1
+
+
+def test_an_uncited_answer_is_flagged() -> None:
+    answer = ask(llm=FakeLLM("Dependencies are resolved per request and cached. " * 3))
+    assert answer.sources == []
+    assert answer.warnings == ["answer_without_citations"]
 
 
 def test_the_prompt_carries_both_the_context_and_the_question() -> None:
@@ -101,6 +131,16 @@ def test_zero_retrieved_chunks_means_zero_model_calls() -> None:
     assert answer.sources == []
     assert answer.retrieval.retrieved == 0
     assert answer.usage == {}
+    # Nothing to cite is not a flaw when there was nothing to cite from.
+    assert answer.warnings == []
+
+
+def test_a_refusal_with_context_available_is_not_flagged() -> None:
+    """The prompt's exact refusal sentence. A warning here would train whoever
+    reads the output to ignore warnings."""
+    refusal = "I do not have enough information in the provided context to answer this."
+    answer = ask(llm=FakeLLM(refusal))
+    assert (answer.answer, answer.sources, answer.warnings) == (refusal, [], [])
 
 
 def test_the_retriever_gets_top_k_and_the_source_filter() -> None:

@@ -54,6 +54,10 @@ class Answer(BaseModel):
 
     # An empty answer is a failed call wearing a success's clothes.
     answer: str = Field(min_length=1)
+    # Only the sources the answer actually cited, renumbered from 1 to match the
+    # text. All of what was retrieved stays in ``retrieval``, where it belongs as
+    # a retrieval fact: listing five sources for an answer that used two
+    # overstates provenance.
     sources: list[Source] = Field(default_factory=list)
     retrieval: RetrievalStats
     latency_ms: float = Field(ge=0)
@@ -61,3 +65,6 @@ class Answer(BaseModel):
     # Captured from the first call rather than retrofitted at step 24, when
     # adding it would mean touching every call site. Empty when no call happened.
     usage: dict[str, int] = Field(default_factory=dict)
+    # A flawed answer with an honest warning is more useful than a stack trace,
+    # and step 11's benchmark can count these. Exceptions live in strict mode.
+    warnings: list[str] = Field(default_factory=list)
