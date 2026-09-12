@@ -2,6 +2,7 @@
 
     uv run python scripts/benchmark.py --label "dense-baseline"
     uv run python scripts/benchmark.py --label "tutorial" --filter doc_type=tutorial
+    uv run python scripts/benchmark.py --label "oracle" --oracle-filter
     uv run python scripts/benchmark.py --label "hybrid" --compare "dense-baseline"
     uv run python scripts/benchmark.py --summary "chunk-*"
 
@@ -23,10 +24,12 @@ from app.evaluation.benchmark import (  # noqa: E402
     DEFAULT_ABSTENTION_THRESHOLD,
     SUMMARY_COLUMNS,
     BenchmarkResult,
+    question_doc_type,
     run_benchmark,
     summarise,
 )
 from app.evaluation.dataset import load_dataset  # noqa: E402
+from app.models.chunks import ScoredChunk  # noqa: E402
 from app.retrieval.search import parse_filters, search  # noqa: E402
 
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
@@ -153,6 +156,12 @@ def main() -> int:
         metavar="KEY=VALUE",
         help="repeatable; e.g. --filter doc_type=tutorial --filter doc_type=tutorial,advanced",
     )
+    parser.add_argument(
+        "--oracle-filter",
+        action="store_true",
+        help="filter each question to its ground-truth doc_type — the ceiling on "
+        "facet routing, not a retriever you can ship",
+    )
     parser.add_argument("--collection", help="default: QDRANT_COLLECTION")
     # Recorded, not used: the collection cannot tell us how it was chunked, and a
     # summary row that says "recursive" for every strategy is worse than no row.
@@ -183,20 +192,35 @@ def main() -> int:
         questions = [question for question in questions if not question.held_out]
 
     collection = args.collection or settings.qdrant_collection
-    result = run_benchmark(
-        questions,
-        lambda text: search(
+    base_filters = parse_filters(args.filter)
+    # Keyed on the question text because run_benchmark hands the retriever a
+    # string: widening that seam for one experiment would cost steps 14-19 a
+    # signature change each. Exact as long as no two questions share a text.
+    oracle = {q.question: question_doc_type(q) for q in questions} if args.oracle_filter else {}
+    if args.oracle_filter and len(oracle) != len(questions):
+        raise SystemExit("two questions share the same text; the oracle lookup would be wrong")
+
+    def retrieve(text: str) -> list[ScoredChunk]:
+        filters: dict[str, str | list[str]] = dict(base_filters)
+        if facet := oracle.get(text):
+            filters["doc_type"] = facet
+        return search(
             text,
             top_k=args.top_k,
-            filters=parse_filters(args.filter) or None,
+            filters=filters or None,
             collection=collection,
             settings=settings,
-        ),
+        )
+
+    result = run_benchmark(
+        questions,
+        retrieve,
         ks=[k for k in KS if k <= args.top_k],
         label=args.label,
         config={
             "top_k": args.top_k,
-            "filters": parse_filters(args.filter) or None,
+            "filters": base_filters or None,
+            "oracle_filter": args.oracle_filter,
             "dataset": str(args.dataset),
             "held_out": args.include_held_out,
             "collection": collection,
