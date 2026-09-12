@@ -32,8 +32,11 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 200
     top_k: int = 5
-    # Step 14-16 compared three. The default changes only if the sweep meets the
-    # rule in the step 14-16 design doc: dense | lexical | hybrid.
+    # Step 16 measured all three: dense | lexical | hybrid. Dense stays the
+    # default because the pre-registered rule was not met — the best fusion row
+    # (hybrid-k60-d20) reached Recall@5 0.737 against 0.776, and conceptual and
+    # multi_doc each regressed about 0.10. The two settings below still matter:
+    # --mode hybrid is measured, shippable and 0.044 better at Recall@10.
     retrieval_mode: str = "dense"
     # Per-branch depth before fusion. Fusing two top-10 lists cannot surface a
     # document neither branch ranked top-10, so this is the parameter that moves
