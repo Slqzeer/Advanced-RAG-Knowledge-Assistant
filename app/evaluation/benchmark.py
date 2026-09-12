@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from fnmatch import fnmatch
 from typing import Any
 
 from app.evaluation.dataset import EvalQuestion
@@ -54,6 +55,44 @@ class BenchmarkResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+SUMMARY_COLUMNS = (
+    "label",
+    "strategy",
+    "size",
+    "overlap",
+    "recall@5",
+    "recall@10",
+    "mrr",
+    "ndcg@5",
+    "conceptual r@5",
+    "p50 ms",
+)
+
+
+def summarise(history: Sequence[Mapping[str, Any]], pattern: str) -> list[list[str]]:
+    """One row per label matching ``pattern``, newest run of each, ready for a table.
+
+    ``results.jsonl`` already holds every number a comparison needs, so a matrix
+    of runs is a filter over it rather than a driver script that re-runs them.
+    """
+    latest: dict[str, Mapping[str, Any]] = {
+        row["label"]: row for row in history if fnmatch(row["label"], pattern)
+    }
+    return [
+        [
+            label,
+            str(row["config"].get("strategy", "?")),
+            str(row["config"].get("chunk_size", "?")),
+            str(row["config"].get("chunk_overlap", "?")),
+            *[f"{row['aggregate'].get(m, 0.0):.3f}" for m in ("recall@5", "recall@10", "mrr")],
+            f"{row['aggregate'].get('ndcg@5', 0.0):.3f}",
+            f"{row['per_category'].get('conceptual', {}).get('recall@5', 0.0):.3f}",
+            f"{row['latency_p50_ms']:.0f}",
+        ]
+        for label, row in latest.items()
+    ]
 
 
 def git_commit() -> str:

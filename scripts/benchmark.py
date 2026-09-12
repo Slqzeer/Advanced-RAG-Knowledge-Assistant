@@ -2,6 +2,7 @@
 
     uv run python scripts/benchmark.py --label "dense-baseline"
     uv run python scripts/benchmark.py --label "hybrid" --compare "dense-baseline"
+    uv run python scripts/benchmark.py --summary "chunk-*"
 
 Every row is appended to ``data/eval/results.jsonl`` with the git commit that
 produced it. That file is the README's results table and step 29's dashboard;
@@ -19,8 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.core.config import get_settings  # noqa: E402
 from app.evaluation.benchmark import (  # noqa: E402
     DEFAULT_ABSTENTION_THRESHOLD,
+    SUMMARY_COLUMNS,
     BenchmarkResult,
     run_benchmark,
+    summarise,
 )
 from app.evaluation.dataset import load_dataset  # noqa: E402
 from app.retrieval.search import search  # noqa: E402
@@ -119,7 +122,10 @@ def print_comparison(result: BenchmarkResult, label: str, history: list[dict[str
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--label", required=True, help="names this run in the history file")
+    parser.add_argument("--label", help="names this run in the history file")
+    parser.add_argument(
+        "--summary", help="print past runs whose label matches this glob, then exit"
+    )
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--top-k", type=int, default=max(KS))
     parser.add_argument("--source", help="restrict to one corpus, e.g. fastapi")
@@ -135,6 +141,17 @@ def main() -> int:
     parser.add_argument("--abstention-threshold", type=float, default=DEFAULT_ABSTENTION_THRESHOLD)
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+    if args.summary:
+        rows = summarise(load_history(HISTORY), args.summary)
+        if not rows:
+            print(f"no run in {HISTORY} whose label matches {args.summary!r}")
+            return 1
+        print(f"\n## runs matching {args.summary!r}\n")
+        print(table(list(SUMMARY_COLUMNS), rows))
+        return 0
+    if not args.label:
+        parser.error("--label is required unless --summary is given")
 
     settings = get_settings()
     questions = load_dataset(args.dataset)

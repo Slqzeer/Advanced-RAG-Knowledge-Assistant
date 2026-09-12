@@ -1,10 +1,11 @@
 """The runner, against a scripted retriever: no Qdrant, no API key, no network."""
 
 import json
+from typing import Any
 
 import pytest
 
-from app.evaluation.benchmark import run_benchmark
+from app.evaluation.benchmark import run_benchmark, summarise
 from app.evaluation.dataset import EvalQuestion
 from app.models.chunks import Chunk, ScoredChunk
 
@@ -141,3 +142,39 @@ def test_chunks_are_deduplicated_to_documents_before_scoring() -> None:
 
     assert result.aggregate["precision@5"] == pytest.approx(1 / 5)
     assert result.per_question[0]["retrieved_documents"] == 2
+
+
+# --- the history summary ---------------------------------------------------
+
+
+def history_row(label: str, recall5: float, **config: object) -> dict[str, Any]:
+    return {
+        "label": label,
+        "config": {"strategy": "recursive", "chunk_size": 1000, "chunk_overlap": 200, **config},
+        "aggregate": {"recall@5": recall5, "recall@10": recall5, "mrr": 0.5, "ndcg@5": 0.4},
+        "per_category": {"conceptual": {"recall@5": recall5 - 0.1}},
+        "latency_p50_ms": 57.0,
+    }
+
+
+def test_the_summary_keeps_one_row_per_matching_label() -> None:
+    history = [
+        history_row("chunk-fixed-1000-200", 0.5, strategy="fixed"),
+        history_row("dense-baseline", 0.713),
+        history_row("chunk-sentence-1000-200", 0.6, strategy="sentence"),
+    ]
+    rows = summarise(history, "chunk-*")
+    assert [row[0] for row in rows] == ["chunk-fixed-1000-200", "chunk-sentence-1000-200"]
+    assert [row[1] for row in rows] == ["fixed", "sentence"]
+    assert rows[0][4] == "0.500"
+
+
+def test_the_summary_keeps_only_the_last_run_of_a_repeated_label() -> None:
+    history = [history_row("chunk-fixed-1000-200", 0.5), history_row("chunk-fixed-1000-200", 0.9)]
+    rows = summarise(history, "chunk-*")
+    assert len(rows) == 1
+    assert rows[0][4] == "0.900"
+
+
+def test_a_glob_matching_nothing_summarises_nothing() -> None:
+    assert summarise([history_row("dense-baseline", 0.713)], "chunk-*") == []
