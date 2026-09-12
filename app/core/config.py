@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_cache_path: Path = Path("data/processed/embeddings.sqlite")
     generation_model: str = "gpt-4o-mini"
-    chunk_strategy: str = "recursive"
+    # Step 12 compared four: sentence won on Recall@5 (0.776 vs 0.713 recursive),
+    # and 1000/200 was the peak of both the size and the overlap sweep.
+    chunk_strategy: str = "sentence"
     chunk_size: int = 1000
     chunk_overlap: int = 200
     top_k: int = 5

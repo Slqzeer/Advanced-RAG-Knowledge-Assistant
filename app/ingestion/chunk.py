@@ -326,7 +326,10 @@ def split_semantic(
 
 
 Splitter = Callable[..., list[tuple[int, int]]]
-DEFAULT_STRATEGY = "recursive"
+# Step 12 measured all four on the step 10 question set: sentence won Recall@5
+# 0.776 against recursive's 0.713. Mirrors `Settings.chunk_strategy`, as
+# CHUNK_SIZE and CHUNK_OVERLAP mirror theirs.
+DEFAULT_STRATEGY = "sentence"
 # Selected by name from the command line, so a benchmark run names its splitter
 # and `results.jsonl` records which one produced the number.
 STRATEGIES: dict[str, Splitter] = {

@@ -39,6 +39,11 @@ def sentences(count: int, word: str = "prose") -> str:
     return " ".join(f"{word} sentence number {n} carries a few words" for n in range(count)) + "."
 
 
+def prose(count: int, opener: str = "Sentence") -> str:
+    """`count` real sentences, unlike `sentences()` which builds one long one."""
+    return " ".join(f"{opener} number {n} carries a few words here." for n in range(count))
+
+
 def uncovered(text: str, spans: list[tuple[int, int]]) -> str:
     """The text rebuilt from the chunks with every overlap dropped."""
     out: list[str] = []
@@ -207,7 +212,7 @@ def test_section_is_the_nearest_enclosing_heading() -> None:
 
 
 def test_metadata_is_carried_onto_every_chunk() -> None:
-    chunks = chunk_document(document(sentences(200), language="fr"))
+    chunks = chunk_document(document(prose(200), language="fr"))
     assert len(chunks) > 1
     assert all(c.source == "fastapi" and c.title == "Tutorial" for c in chunks)
     assert all(c.url == "https://fastapi.tiangolo.com/tutorial/" for c in chunks)
@@ -221,11 +226,6 @@ def test_chunk_documents_concatenates() -> None:
 
 
 # --- the strategy registry -------------------------------------------------
-
-
-def prose(count: int, opener: str = "Sentence") -> str:
-    """`count` real sentences, unlike `sentences()` which builds one long one."""
-    return " ".join(f"{opener} number {n} carries a few words here." for n in range(count))
 
 
 def uniform(texts: list[str]) -> list[list[float]]:
@@ -403,6 +403,9 @@ def test_recursive_is_byte_identical_to_the_step_11_baseline() -> None:
         else:
             parts.append(sentences(rng.randint(1, 30)))
     text = "\n\n".join(parts)
-    digest = hashlib.sha256(repr(split_text(text)).encode()).hexdigest()
+    spans = split_text(text)
+    digest = hashlib.sha256(repr(spans).encode()).hexdigest()
     assert digest == "93885e1e65ffb90c421013202c16391fdad91e35324371dc5327c1b6b9f61b14"
-    assert chunk_document(document(text), strategy="recursive") == chunk_document(document(text))
+    chunks = chunk_document(document(text), strategy="recursive")
+    kept = [span for span in spans if text[slice(*span)].strip()]
+    assert [(c.char_start, c.char_end) for c in chunks] == kept
