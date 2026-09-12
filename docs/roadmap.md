@@ -8,7 +8,8 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-13 are done — `v0.4` is tagged. Step 14 (BM25) is next.**
+**Phase 0 and steps 02-16 are done — `v0.6` is tagged. Step 17 (reranking) is next,
+and it now has something to rerank.**
 
 Shipped and verified:
 
@@ -25,20 +26,22 @@ Shipped and verified:
 | Embeddings, cached | `app/ingestion/embed.py` — 1 607 chunks → 1 536 dims via `text-embedding-3-small`, 404 s cold / 0.12 s warm, 13.3 MB sqlite cache, $0.006 |
 | Shared settings | `app/core/config.py` — one `Settings`, `.env` loaded once through an `lru_cache`d accessor |
 | Qdrant indexing | `app/retrieval/store.py`, `scripts/index_corpus.py` — 1 607 points, cosine, payload indexes on `source`/`document_id`/`language`, 4.4 s end to end; a re-run leaves 1 607 points in 3.5 s |
-| Similarity search | `app/retrieval/search.py`, `scripts/search.py` — ranked `ScoredChunk`s, 119 ms warm / 0.9-1.8 s cold, 15 tests; `HTTPException 422` recorded as the hybrid-search target (1 chunk in the top 50 contains the token, at rank 5) |
+| Similarity search | `app/retrieval/search.py`, `scripts/search.py` — ranked `ScoredChunk`s, 119 ms warm / 0.9-1.8 s cold, 15 tests; `HTTPException 422` recorded here as the hybrid-search target (1 chunk in the top 50 contains the token, at rank 5) — steps 14-16 settled it, see below |
 | Minimal RAG | `app/generation/{context,llm,answer}.py`, `app/models/answers.py`, `scripts/ask.py` — `gpt-4o-mini` at `temperature=0`, 1.5-3.7 s end to end, 851-1 021 tokens/question (~$0.0003), 23 tests with no network; a French question answers in French, an out-of-corpus question answers "I do not know" |
 | Citation validation | `app/generation/citations.py` — every `[n]` parsed and checked against the context actually supplied, sources renumbered from 1 in the text *and* the list, `--strict` fails instead of warning |
 | Evaluation dataset | `app/evaluation/dataset.py`, `scripts/validate_dataset.py` — 50 questions, 5 categories, document-level ground truth cross-checked against the cleaned corpus, 5 held out |
 | Retrieval metrics | `app/evaluation/metrics.py`, `app/evaluation/benchmark.py`, `scripts/benchmark.py` — Recall@K, Precision@K, MRR, Hit Rate@K, NDCG@K over deduplicated documents, per-category breakdown, p50/p95 latency, history in `data/eval/results.jsonl` with the git commit of each run |
 | Chunking comparison | `app/ingestion/chunk.py` — four strategies behind one registry (`recursive`, `fixed`, `sentence`, `semantic`), one Qdrant collection each, nine runs; `sentence` wins Recall@5 0.776 against the 0.713 baseline and becomes the default, 147 docs → 1 484 chunks |
+| BM25 index | `app/retrieval/bm25.py` — hand-rolled Okapi BM25 with Lucene's IDF variant, built by scrolling the same collection dense search queries, 1 484 chunks, avg length 126 tokens, ~200 ms build / 2 ms per query, 20 tests, no new dependency |
+| Hybrid retrieval | `app/retrieval/search.py` — `RETRIEVERS` keyed `dense`\|`lexical`\|`hybrid`, `rrf()` on ranks only, `matches_filters` giving the lexical branch filter parity; six measured runs. Best fusion row `hybrid-k60-d20`: Recall@5 **0.737** (against 0.776 dense) but Recall@10 **0.829** (against 0.785). The pre-registered rule was not met, so `dense` stays the default |
 | Metadata filtering | `app/ingestion/loader.py`, `app/retrieval/search.py` — `doc_type` derived from the corpus layout, indexed, filterable through a generic `filters=` mapping; per-facet recall and an oracle run recording the ceiling on facet routing at **+0.000 Recall@5** |
 
 The loop is closed, verified and measured: a question goes in, a grounded answer with resolved citations comes out of `scripts/ask.py`, and 38 answerable questions give it a score. No HTTP endpoint yet — that is step 25.
 
 Four things later steps own:
 
-- **`HTTPException 422` still fails visibly**, chunking included. The answer is an honest "I do not know" because dense retrieval never surfaces the paragraph defining 422 — the step 07 finding, still costing a real answer. Step 14's target, and step 12 confirmed chunking cannot reach it.
-- **Recall@10 minus Recall@5 is now 0.009**, down from 0.024. The number to watch across steps 12-17. While it stays near zero the retriever is missing documents outright and a reranker has nothing to reorder: step 14's hybrid search has to open the gap before step 17 is worth running.
+- **`HTTPException 422` is resolved as a finding, not as a fix.** Steps 14-16 gave the retriever the missing capability — BM25's rank-1 hit for `HTTPException 422` does contain the literal token, and `--mode hybrid` surfaces `reference/exceptions` at rank 2 — and the answer is still an honest "I do not know". The four chunks in the corpus containing `422` are two release notes and an OpenAPI JSON example; none of them explains what the code means. The refusal is correct. No later step owns this: the target was chosen at step 07, before step 11 said where the gap actually was, and `exact` was already the strongest category at 0.892.
+- **Recall@10 minus Recall@5 is now 0.092**, up from 0.009 — RRF fusion opened it tenfold. This was the condition step 17 needed and it is met: 9.2 points of recall now separate rank 5 from rank 10, against 0.9 before, which is exactly what a reranker reorders. **Step 17 is worth running, and it runs on hybrid candidates rather than dense ones.** This is the phase's real result; it is not what the phase set out to achieve.
 - **Generation is ~95 % of the latency.** 1.5-3.7 s per question against ~35 ms of warm retrieval. Any latency work before step 23's cache would be optimising the wrong 5 %.
 - **A score threshold cannot carry refusal.** The 7 out-of-corpus questions score 0.305-0.459, the answerable ones 0.341-0.664. Step 22 needs something other than a floor.
 - **Facet routing has a ceiling of zero.** Step 13's oracle — every question filtered to its own ground-truth `doc_type` — moves Recall@5 by +0.000 and Recall@10 by +0.000; the whole aggregate delta (MRR +0.046) is four questions reordered. Only 16 of 38 answerable questions even have single-facet ground truth, and on the other 22 any single-facet filter drops a relevant document by construction. This is the input step 18 needs: do not build a query-side facet router for this corpus.
@@ -61,7 +64,7 @@ Four things later steps own:
 | 10-11 | Phase 4 — Retrieval evaluation | `v0.4` | A baseline table: Recall@5, Recall@10, MRR, NDCG. The project is presentable here. |
 | 12 | Phase 2 — Chunking | `v0.4+` | Four chunking strategies, one winner, chosen by Recall@5. **Done — `sentence`, Recall@5 0.776.** |
 | 13 | Phase 3 — Metadata | `v0.4+` | A derived `doc_type` facet, a generic `filters=` mapping, per-facet recall. **Done — the routing ceiling is +0.000 Recall@5.** |
-| 14-16 | Phase 5-6 — Hybrid + RRF | `v0.5`-`v0.6` | Dense + BM25 fused; `HTTPException 422` finally retrieves. |
+| 14-16 | Phase 5-6 — Hybrid + RRF | `v0.5`-`v0.6` | Dense + BM25 fused. **Done — hybrid loses Recall@5 (0.737 vs 0.776) and wins Recall@10 (0.829 vs 0.785); `dense` stays the default, and the Recall@10−Recall@5 gap opens from 0.009 to 0.092.** |
 | 17 | Phase 6 — Reranking | `v0.7` | Top-30 recall, top-5 precision, measured latency cost. |
 | 18-19 | Phase 7-8 — Query transforms | `v0.8`-`v0.9` | "et pour docker ?" resolves against conversation history. |
 | 20 | Phase 9 — Compression | `v1.2` | Same answer quality, fewer context tokens. |
@@ -75,7 +78,7 @@ Four things later steps own:
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-12:
+Detailed, executable plans exist for steps 02-16:
 
 | Step | Plan |
 |---|---|
@@ -91,8 +94,9 @@ Detailed, executable plans exist for steps 02-12:
 | 11 Retrieval metrics | [`2026-09-11-step-11-retrieval-metrics.md`](superpowers/plans/2026-09-11-step-11-retrieval-metrics.md) |
 | 12 Chunking experiments | [`2026-09-12-step-12-chunking.md`](superpowers/plans/2026-09-12-step-12-chunking.md) |
 | 13 Metadata filtering | [`2026-09-12-step-13-metadata.md`](superpowers/plans/2026-09-12-step-13-metadata.md) |
+| 14-16 Hybrid search and RRF | [`2026-09-13-step-14-16-hybrid-rrf.md`](superpowers/plans/2026-09-13-step-14-16-hybrid-rrf.md), design: [`2026-09-13-hybrid-rrf-design.md`](superpowers/specs/2026-09-13-hybrid-rrf-design.md) |
 
-**Steps 14-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: which chunking strategy wins, whether BM25 helps this corpus, whether reranking pays for its latency, whether multi-query is worth 4x the cost. Writing those plans now would mean inventing the answers. Each plan gets written at the start of its own step, with step 11's numbers in hand.
+**Steps 17-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: which chunking strategy wins, whether BM25 helps this corpus, whether reranking pays for its latency, whether multi-query is worth 4x the cost. Writing those plans now would mean inventing the answers. Each plan gets written at the start of its own step, with step 11's numbers in hand.
 
 ## How a step lands
 

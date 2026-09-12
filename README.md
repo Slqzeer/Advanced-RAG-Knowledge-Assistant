@@ -16,6 +16,7 @@
 - [Évaluation du retrieval](#évaluation-du-retrieval)
 - [Découpage — quatre stratégies comparées](#découpage--quatre-stratégies-comparées)
 - [Filtrage par métadonnées — le plafond du routage par facette](#filtrage-par-métadonnées--le-plafond-du-routage-par-facette)
+- [Recherche hybride — BM25, RRF et une règle non atteinte](#recherche-hybride--bm25-rrf-et-une-règle-non-atteinte)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -35,7 +36,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 13 terminée — Filtrage par métadonnées et plafond mesuré.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étapes 14-16 terminées — Recherche hybride BM25 + RRF, mesurée et non promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -54,6 +55,8 @@ Fonctionnalités disponibles :
 - génération de réponses via `app.generation` et `scripts/ask.py` : contexte numéroté, appel au modèle à `temperature=0`, objet `Answer` avec sources, statistiques, tokens et latence ; 1,5 à 3,7 s de bout en bout, 851 à 1 021 tokens par question ;
 - validation des citations via `app.generation.citations` : chaque `[n]` est analysé puis confronté au contexte fourni, les sources rendues sont le sous-ensemble réellement cité, renuméroté de 1 dans le texte **et** dans la liste ;
 - jeu d'évaluation annoté via `app.evaluation.dataset` et `scripts/validate_dataset.py` : 50 questions, 5 catégories, vérité terrain au niveau document, recoupée avec le corpus nettoyé.
+- recherche lexicale via `app.retrieval.bm25` : index inversé Okapi BM25 écrit à la main (IDF à la Lucene, `k1=1.5`, `b=0.75`), construit en scrollant la collection que la recherche dense interroge déjà, 1 484 chunks, longueur moyenne 126 tokens, ~200 ms de construction et 2 ms par requête, aucune dépendance ajoutée ;
+- fusion des deux retrievers via `app.retrieval.search` : registre `RETRIEVERS` (`dense` | `lexical` | `hybrid`), `rrf()` qui ne consomme que des rangs et jamais les scores, filtres de payload honorés des deux côtés par `matches_filters`, `--mode` sur `search.py`, `ask.py` et `benchmark.py` ;
 - métriques et banc d'essai via `app.evaluation.metrics`, `app.evaluation.benchmark` et `scripts/benchmark.py` : Recall@K, Precision@K, MRR, Hit Rate@K et NDCG@K sur des documents dédupliqués, ventilation par catégorie, latence p50/p95, historique versionné dans `data/eval/results.jsonl` avec le commit git de chaque run.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
@@ -232,7 +235,7 @@ l'ordre des citations dans le texte. Le détail est dans [Citations](#citations)
 
 **`temperature=0`.** Un système qui répond différemment au deuxième appel identique n'est pas évaluable, et les étapes 11 et 21 sont des évaluations.
 
-**Ce qu'il ignore, il le dit.** « How do I limit memory for a Kubernetes pod ? » — hors corpus — obtient « I do not know », pas une invention plausible. « What does HTTPException 422 mean ? » obtient la même réponse, et c'est cette fois un échec de *retrieval* : la recherche dense remonte la bonne famille de pages entre 0,32 et 0,41, jamais le paragraphe qui définit 422. Le constat de l'étape 07 se paie ici, et c'est exactement ce que la recherche hybride de l'étape 14 doit corriger.
+**Ce qu'il ignore, il le dit.** « How do I limit memory for a Kubernetes pod ? » — hors corpus — obtient « I do not know », pas une invention plausible. « What does HTTPException 422 mean ? » obtient la même réponse, et les étapes 14-16 ont montré que ce n'était pas un échec de *retrieval* : `--mode hybrid` remonte bien `reference/exceptions` et les notes de version au rang 2 et 3, et la réponse reste « I do not know ». Les quatre chunks du corpus qui contiennent le token littéral `422` sont des notes de version et un exemple JSON OpenAPI ; **aucun n'explique ce que 422 signifie**. Le refus est donc correct dans les deux modes, et la cible annoncée à l'étape 07 n'existait pas dans le corpus. Transcription qualitative, sans vérité terrain derrière elle.
 
 **Un modèle, choisi par configuration.** `GENERATION_MODEL` vaut `gpt-4o-mini` par défaut, la clé OpenAI étant déjà requise pour les embeddings : une dépendance, un identifiant. Changer de fournisseur, c'est réécrire le corps de `complete()` dans `app/generation/llm.py` — rien d'autre du pipeline ne voit de client.
 
@@ -323,8 +326,9 @@ délibérément laissée à l'étape 21, avec le score de fidélité qui l'accom
 **Un faux refus est un échec de retrieval, pas de citation.** « How do I return a
 422 validation error ? » refuse proprement, avec zéro source et zéro
 avertissement — exactement le comportement voulu, sur un contexte qui n'aurait pas
-dû être vide. C'est le constat `HTTPException 422` de l'étape 07 qui se repaie, et
-la cible de la recherche hybride de l'étape 14.
+dû être vide. Les étapes 14-16 ont tranché : `--mode hybrid` change les chunks
+retrouvés sans changer la réponse, parce que le corpus ne contient nulle part
+l'explication du code 422. Le contexte *devait* être vide.
 
 **`--show-context` ne numérote plus comme la réponse.** L'option affiche le prompt
 envoyé, donc la numérotation d'origine ; la réponse, elle, est renumérotée. Pour
@@ -452,8 +456,9 @@ précisément `HTTPException(status_code=422)` de l'étape 07, alors que `HTTPEx
 seul (q023) sort ici à 1,000. Le jeu n'a pas été retouché pour coller à l'attente :
 ces questions respectent leur propre règle d'annotation, et réécrire l'étalon après
 avoir vu le résultat est la meilleure façon de mesurer ce qu'on espérait mesurer.
-L'étape 14 ajoutera les questions à token littéral en prose, sous un nouveau label de
-run — un étalon modifié invalide les comparaisons faites avec l'ancien.
+Les étapes 14-16 n'ont rien ajouté au jeu de questions, gelé exprès. BM25 a bien
+confirmé l'analyse sur `exact` : 0,942 de Recall@5 et 1,000 de MRR, soit mieux que la
+recherche dense (0,892) — c'est la seule catégorie où le lexical gagne seul.
 
 **Le vrai point faible est `conceptual` : MRR 0,478.** Une question conceptuelle sur
 deux place son premier document pertinent au-delà du rang 2, sur le terrain de jeu
@@ -642,7 +647,9 @@ trouvé ce qu'il y avait à trouver dans le top 5 ; les documents encore manquan
 sont pas non plus dans le top 10, ils ne sont pas retrouvés du tout. Un reranker
 (étape 17) réordonne des candidats, il n'en fabrique pas : il n'a désormais plus que
 0,9 point à récupérer. **La recherche hybride de l'étape 14 est plus nécessaire
-qu'avant cette étape, pas moins.** `semantic` est la seule à élargir l'écart (0,033),
+qu'avant cette étape, pas moins.** Mesuré depuis : la fusion RRF porte cet écart de
+0,009 à 0,092, donc c'est bien elle qui redonne au reranker de l'étape 17 quelque
+chose à réordonner. `semantic` est la seule à élargir l'écart (0,033),
 sans compenser ailleurs.
 
 **`multi_doc` est la seule catégorie que le gagnant dégrade** (−0,010), et `semantic`
@@ -782,6 +789,123 @@ interface à facettes. Ce qui est écarté, c'est de la **deviner**.
 | Filtrage sur `section` | jamais — des titres en texte libre, des centaines de valeurs distinctes, et aucune annotation à cette granularité ; c'est le reranker de l'étape 17 qui opère sous le document |
 | Une seconde source de corpus | après stabilisation de la pile de retrieval — elle change le vivier et rend non comparables tous les chiffres des étapes 11 à 13 |
 
+## Recherche hybride — BM25, RRF et une règle non atteinte
+
+Un index BM25 écrit à la main est venu se placer à côté de la recherche dense, les deux
+ont été fusionnés par Reciprocal Rank Fusion, et les six lignes qui suivent disent ce
+que la combinaison vaut sur ce corpus. Aucune dépendance n'a été ajoutée : `rank_bm25`,
+`fastembed` et `nltk` sont écartés nommément par la conception.
+
+### La règle de décision, écrite avant le premier run
+
+`RETRIEVAL_MODE` passe de `dense` à `hybrid` **si et seulement si** la meilleure ligne du
+balayage atteint 0,786 de Recall@5 agrégé **et** qu'aucune catégorie ne régresse de plus
+de 0,05 en Recall@5 contre `exact` 0,892, `code` 0,850, `conceptual` 0,733, `multi_doc`
+0,594.
+
+### Les six lignes mesurées
+
+| Run | Mode | k | Profondeur | Recall@5 | Recall@10 | MRR | NDCG@5 | p50 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `dense-sentence-doctype` | dense | — | — | **0,776** | 0,785 | **0,810** | **0,713** | 65 ms |
+| `bm25-sentence` | lexical | — | — | 0,605 | 0,632 | 0,570 | 0,534 | **2 ms** |
+| `hybrid-k60-d50` | hybrid | 60 | 50 | 0,721 | 0,807 | 0,757 | 0,676 | 89 ms |
+| `hybrid-k20-d50` | hybrid | 20 | 50 | 0,737 | 0,800 | 0,741 | 0,679 | 74 ms |
+| `hybrid-k100-d50` | hybrid | 100 | 50 | 0,721 | 0,807 | 0,757 | 0,676 | 83 ms |
+| `hybrid-k60-d20` | hybrid | 60 | 20 | **0,737** | **0,829** | 0,748 | **0,680** | 83 ms |
+| `hybrid-k60-d100` | hybrid | 60 | 100 | 0,721 | 0,776 | 0,754 | 0,676 | 84 ms |
+
+### Le verdict : les deux clauses échouent
+
+Meilleure ligne `hybrid-k60-d20`, Recall@5 **0,737**. La clause 1 demandait 0,786 :
+**échec**, et l'écart est de 0,039 en dessous de la baseline dense elle-même. Les quatre
+deltas par catégorie :
+
+| Catégorie | Baseline dense | `hybrid-k60-d20` | Delta | Clause 2 (−0,05) |
+|---|---:|---:|---:|---|
+| `exact` | 0,892 | 0,925 | **+0,033** | passe |
+| `code` | 0,850 | 0,850 | +0,000 | passe |
+| `conceptual` | 0,733 | 0,633 | **−0,100** | **échec** |
+| `multi_doc` | 0,594 | 0,490 | **−0,104** | **échec** |
+
+`RETRIEVAL_MODE` reste donc `dense`. Le code, les tests et les six lignes mesurées sont
+livrés quand même : `--mode hybrid` est disponible, mesuré et documenté, il n'est
+simplement pas le défaut.
+
+### Ce que les chiffres disent, y compris ce qu'on n'attendait pas
+
+**La cible annoncée n'était pas le point faible.** `exact` était déjà la catégorie la
+plus forte du corpus à 0,892 avant cette phase. Or c'est précisément la seule que BM25
+améliore — 0,942 seul, 1,000 de MRR, mieux que la recherche dense. Les étapes 14-16 ont
+donc renforcé ce qui marchait déjà et dégradé `conceptual` et `multi_doc`, les deux
+catégories qui avaient réellement besoin d'aide. La leçon est de séquencement : la cible
+qualitative avait été choisie à l'étape 07, avant que l'étape 11 ne dise où était le
+trou.
+
+**L'écart Recall@10 − Recall@5 passe de 0,009 à 0,092, et c'est le vrai résultat de la
+phase.** La recherche dense avait trouvé tout ce qu'elle pouvait trouver dans le top 5 ;
+le reranker de l'étape 17 n'avait plus que 0,9 point à récupérer, ce qui rendait l'étape
+presque vide de sens. La fusion multiplie cette fenêtre par dix : 9,2 points de rappel
+séparent désormais le rang 5 du rang 10, contre 0,9 avant, et un reranker réordonne
+exactement cela. Au passage Recall@10 gagne 4,4 points sur la baseline dense. **L'étape 17 tourne donc sur les candidats hybrides, pas sur les
+candidats denses** — c'est ce que la phase a produit de plus utile, et ce n'est pas ce
+qu'elle visait.
+
+**RRF ne fusionne que des rangs, jamais des scores.** Une similarité cosinus et un score
+BM25 ne partagent aucune échelle ; les normaliser par requête inventerait une
+comparaison que les nombres ne soutiennent pas. Conséquence assumée et documentée : le
+score rendu en mode `hybrid` vaut environ 0,03 et non 0,3 à 0,6, donc
+`abstention_rate` passe à 1,000 sur ces runs. Ce n'est pas un défaut de refus, c'est un
+seuil devenu inapplicable hors du mode dense ; chaque ligne enregistre son `mode` pour
+que les deux ne soient jamais comparées par accident. Le refus appartient à l'étape 22.
+
+**Le balayage bouge peu, et dans une seule direction.** `k=100` et `k=60` donnent des
+lignes identiques ; seul `k=20` change quelque chose, en gagnant 0,016 de Recall@5 et en
+perdant 0,007 de Recall@10. La profondeur est le paramètre qui compte, et elle va à contre-sens
+de l'intuition : descendre de 50 à 20 candidats par branche *améliore* les deux rappels,
+tandis que monter à 100 dégrade Recall@10 de 0,031. Plus de candidats lexicaux, c'est
+plus de bruit à fusionner.
+
+**BM25 coûte 2 ms.** Contre 65 ms pour la branche dense, aller-retour Qdrant et vecteur
+de requête en cache compris. La branche lexicale n'ouvre aucune connexion, n'appelle
+aucune API et ne dépense rien ; le mode hybride coûte 83 ms, soit le prix de la branche
+dense plus la fusion.
+
+### La transcription `HTTPException 422`, sans vérité terrain
+
+Preuve qualitative, attachée à aucune métrique, et négative. Les deux modes refusent :
+
+```
+$ uv run python scripts/ask.py "What does HTTPException 422 mean?" --mode dense
+I do not have enough information in the provided context to answer this.
+5 retrieved, 5 used, 0 dropped, 0 cited  |  gpt-4o-mini  |  1215 tokens  |  2983 ms
+
+$ uv run python scripts/ask.py "What does HTTPException 422 mean?" --mode hybrid
+I do not have enough information in the provided context to answer this.
+5 retrieved, 5 used, 0 dropped, 0 cited  |  gpt-4o-mini  |  947 tokens  |  2831 ms
+```
+
+Le retrieval a pourtant changé : `--mode hybrid` remonte `reference/exceptions` au rang 2
+et les notes de version aux rangs 3 et 5, là où `--mode dense` ne rend que de la prose
+`tutorial/handling-errors`. Et sur la requête courte `HTTPException 422`, le rang 1
+lexical contient bel et bien la chaîne `422` — la capacité que l'étape 07 avait
+identifiée comme manquante existe maintenant. Ce qui manque est ailleurs : les quatre
+chunks du corpus qui contiennent `422` sont deux notes de version et un exemple JSON
+OpenAPI, et **aucun n'explique ce que le code signifie**. Le refus est la réponse
+correcte dans les deux modes. Une transcription négative publiée telle quelle vaut mieux
+qu'une transcription omise.
+
+### Écarté volontairement
+
+| Écarté | À ajouter quand |
+|---|---|
+| `rank_bm25`, `fastembed`, `nltk` | jamais pour cette phase — règle 3 de la feuille de route ; l'index tient en 150 lignes |
+| Vecteur creux nommé côté Qdrant | si le corpus dépasse un index en mémoire — le modificateur IDF de Qdrant ne fournit que le facteur IDF, `k1` et `b` resteraient en Python et la formule serait coupée en deux systèmes |
+| Normalisation des scores avant fusion | jamais : c'est la couche qui ment, et RRF existe précisément pour ne pas en avoir besoin |
+| Racinisation et liste de mots vides | jamais sur ce corpus : l'IDF écrase déjà « the », et un vocabulaire fait d'identifiants ne se racinise pas |
+| Index BM25 persistant sur disque | si les ~200 ms de construction pèsent — ils ne pèsent pas devant 1,5 à 3,7 s de génération |
+| Sixième combinaison de paramètres | jamais après avoir vu les cinq premières : élargir le balayage pour trouver une ligne favorable est l'abandon silencieux d'une règle pré-enregistrée |
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -796,7 +920,7 @@ Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de re
 
 **Le translinguistique fonctionne.** La question française et sa jumelle anglaise classent toutes deux `tutorial/dependencies/index` en tête et partagent 4 résultats sur 5. Le français score plus bas de bout en bout (0,677 contre 0,774 au rang 1) : l'écart est constant, pas rédhibitoire. Aucune traduction de requête n'est nécessaire pour l'instant.
 
-**`HTTPException 422` est l'échec qui justifie les étapes 14-16.** La recherche dense retrouve la bonne famille de pages — `tutorial/handling-errors` aux rangs 1, 2 et 4 — mais le token littéral `422` n'y contribue en rien : un seul chunk de tout le top 50 contient la chaîne, il arrive au rang 5 à 0,3214, et c'est un exemple JSON OpenAPI dans `advanced/additional-responses` qui liste incidemment une réponse 422. Seuls 2 des 155 documents du corpus contiennent `422`. La cible de la recherche hybride est donc précise : faire remonter ces deux-là, au-dessus de la prose générique sur la gestion d'erreurs.
+**`HTTPException 422` est l'échec qui justifie les étapes 14-16.** La recherche dense retrouve la bonne famille de pages — `tutorial/handling-errors` aux rangs 1, 2 et 4 — mais le token littéral `422` n'y contribue en rien : un seul chunk de tout le top 50 contient la chaîne, il arrive au rang 5 à 0,3214, et c'est un exemple JSON OpenAPI dans `advanced/additional-responses` qui liste incidemment une réponse 422. Seuls 2 des 155 documents du corpus contiennent `422`. La cible de la recherche hybride semblait donc précise : faire remonter ces deux-là, au-dessus de la prose générique sur la gestion d'erreurs. **Les étapes 14-16 l'ont faite, et cela n'a rien changé à la réponse.** BM25 remonte bien le token littéral — sur `HTTPException 422`, son rang 1 contient la chaîne `422`, ce que la recherche dense ne fait jamais — et `--mode hybrid` place `reference/exceptions` au rang 2. Mais les quatre chunks porteurs de `422` sont deux notes de version et un exemple JSON OpenAPI : aucun ne définit le code. `scripts/ask.py --mode hybrid` refuse donc exactement comme `--mode dense`, et c'est la bonne réponse. La leçon est sur la méthode, pas sur le retrieval : une cible qualitative choisie à l'étape 07, sans vérité terrain dans le jeu d'évaluation, ne pouvait pas être validée par une mesure — et `exact` était déjà la catégorie la plus forte à 0,892 avant que cette phase ne commence.
 
 **Les scores ne vivent pas sur une seule échelle.** Les questions en langue naturelle se situent entre 0,61 et 0,77, les requêtes mots-clés (`Depends`, `HTTPException 422`) entre 0,28 et 0,37 — sur des résultats pourtant parfaitement pertinents. Un seuil de score fixe rejetterait le second groupe en bloc. La règle de refus de l'étape 22 aura besoin d'autre chose qu'un plancher.
 
@@ -839,7 +963,7 @@ Ce diagramme représente la cible du projet, pas son état actuel.
 | Tests | pytest | Configuré |
 | Qualité | Ruff, mypy, pre-commit | Configuré |
 | Orchestration RAG | LangChain | Planifié |
-| Recherche lexicale | BM25 | Planifié |
+| Recherche lexicale | BM25 écrit à la main | Implémentée, `--mode lexical` et `--mode hybrid` |
 | Évaluation | RAGAS et métriques maison | Planifié |
 | Observabilité | LangSmith ou OpenTelemetry | Planifié |
 | CI | GitHub Actions | Planifié |
@@ -908,6 +1032,10 @@ uv run python scripts/index_corpus.py --strategy semantic --collection chunks_se
 uv run python scripts/search.py "How does dependency injection work in FastAPI?"
 uv run python scripts/search.py "HTTPException 422" --top-k 10 --filter doc_type=tutorial
 
+# Choisir le retriever : dense (défaut), lexical (BM25) ou hybrid (fusion RRF) — étapes 14-16
+uv run python scripts/search.py "HTTPException 422" --mode hybrid
+uv run python scripts/benchmark.py --label "hybrid-k60-d50" --mode hybrid --candidates 50
+
 # Poser une question et obtenir une réponse sourcée
 uv run python scripts/ask.py "How does dependency injection work in FastAPI?"
 uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?" --show-context
@@ -971,7 +1099,7 @@ docker compose down
 - [x] **Phase 2 — Chunking** : comparer les stratégies et mesurer leur impact (faite ; `sentence` gagne, Recall@5 0,776).
 - [x] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk (faite ; `doc_type` indexé et filtrable, plafond du routage mesuré à +0,000 de Recall@5).
 - [x] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG (faite, `v0.4`).
-- [ ] **Phase 5 — Recherche hybride** : combiner recherche dense et BM25.
+- [x] **Phase 5 — Recherche hybride** : combiner recherche dense et BM25 (faite ; BM25 maison et fusion RRF mesurés, `dense` reste le défaut — la règle d'acceptation n'est pas atteinte, Recall@5 0,737 contre 0,776, mais Recall@10 passe de 0,785 à 0,829).
 - [ ] **Phase 6 — Reranking** : optimiser la précision des candidats.
 - [ ] **Phase 7 — Query rewriting** : rendre les questions conversationnelles autonomes.
 - [ ] **Phase 8 — Multi-query retrieval** : augmenter le recall par expansion de requêtes.
@@ -997,10 +1125,11 @@ Une valeur absente signifie que l'expérience n'a pas encore été exécutée. C
 | Chunking `sentence` (étape 12) | **0,776** | 0,785 | 0,810 | 35 ms* | ~0,04 $ (unique)**** |
 | Métadonnées `doc_type` (étape 13) | 0,776 | 0,785 | 0,810 | 65 ms* | — |
 | Oracle de facette (étape 13, plafond) | 0,776 | 0,785 | 0,856 | 63 ms* | — |
-| Recherche hybride | — | — | — | — | — |
+| BM25 seul (étape 14) | 0,605 | 0,632 | 0,570 | 2 ms* | — |
+| Recherche hybride RRF (étapes 15-16) | 0,737 | **0,829** | 0,748 | 83 ms* | — |
 | Reranking | — | — | — | — | — |
 
-\* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms), `dense-sentence-doctype` et `dense-sentence-oracle-filter` à l'étape 13 (p50 65 et 63 ms, p95 94 et 92 ms — mesurés dans la même session, donc comparables entre eux mais pas à l'étape 12, dont la session était plus rapide sur toute la ligne). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
+\* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms), `dense-sentence-doctype` et `dense-sentence-oracle-filter` à l'étape 13 (p50 65 et 63 ms, p95 94 et 92 ms — mesurés dans la même session, donc comparables entre eux mais pas à l'étape 12, dont la session était plus rapide sur toute la ligne). `bm25-sentence` et `hybrid-k60-d20` aux étapes 14-16 (p50 2 et 83 ms, p95 4 et 116 ms). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
 
 \*\* Bout en bout via `scripts/ask.py`, sur quatre questions réelles : 851 à 1 021 tokens par appel à `gpt-4o-mini`, soit environ 0,0003 $ l'unité aux tarifs affichés. La génération domine, elle pèse plus de 95 % du temps de réponse.
 
