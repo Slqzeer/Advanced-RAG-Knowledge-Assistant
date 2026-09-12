@@ -123,6 +123,12 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--top-k", type=int, default=max(KS))
     parser.add_argument("--source", help="restrict to one corpus, e.g. fastapi")
+    parser.add_argument("--collection", help="default: QDRANT_COLLECTION")
+    # Recorded, not used: the collection cannot tell us how it was chunked, and a
+    # summary row that says "recursive" for every strategy is worse than no row.
+    parser.add_argument("--strategy", help="how --collection was chunked; recorded only")
+    parser.add_argument("--chunk-size", type=int, help="ditto; recorded only")
+    parser.add_argument("--overlap", type=int, help="ditto; recorded only")
     parser.add_argument("--include-held-out", action="store_true")
     parser.add_argument("--no-save", action="store_true", help="print only, append nothing")
     parser.add_argument("--compare", help="print a delta table against a previous label")
@@ -135,9 +141,12 @@ def main() -> int:
     if not args.include_held_out:
         questions = [question for question in questions if not question.held_out]
 
+    collection = args.collection or settings.qdrant_collection
     result = run_benchmark(
         questions,
-        lambda text: search(text, top_k=args.top_k, source=args.source, settings=settings),
+        lambda text: search(
+            text, top_k=args.top_k, source=args.source, collection=collection, settings=settings
+        ),
         ks=[k for k in KS if k <= args.top_k],
         label=args.label,
         config={
@@ -145,10 +154,11 @@ def main() -> int:
             "source": args.source,
             "dataset": str(args.dataset),
             "held_out": args.include_held_out,
-            "collection": settings.qdrant_collection,
+            "collection": collection,
             "embedding_model": settings.embedding_model,
-            "chunk_size": settings.chunk_size,
-            "chunk_overlap": settings.chunk_overlap,
+            "strategy": args.strategy or settings.chunk_strategy,
+            "chunk_size": args.chunk_size or settings.chunk_size,
+            "chunk_overlap": settings.chunk_overlap if args.overlap is None else args.overlap,
             "abstention_threshold": args.abstention_threshold,
         },
         abstention_threshold=args.abstention_threshold,

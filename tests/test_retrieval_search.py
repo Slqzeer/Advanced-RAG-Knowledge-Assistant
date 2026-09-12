@@ -143,6 +143,13 @@ def test_the_collection_and_payload_flags_come_from_the_settings() -> None:
     assert client.calls[0]["with_payload"] is True
 
 
+def test_an_explicit_collection_overrides_the_settings() -> None:
+    """Step 12 indexes one collection per chunking strategy and benchmarks each."""
+    client = FakeClient()
+    run(client=client, collection="chunks_semantic")
+    assert client.calls[0]["collection_name"] == "chunks_semantic"
+
+
 # --- against a real Qdrant -------------------------------------------------
 
 requires_qdrant = pytest.mark.requires_qdrant

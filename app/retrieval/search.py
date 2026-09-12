@@ -39,6 +39,7 @@ def search(
     *,
     top_k: int = 5,
     source: str | None = None,
+    collection: str | None = None,
     settings: Settings | None = None,
     client: QdrantClient | None = None,
     embedder: Embedder | None = None,
@@ -50,6 +51,11 @@ def search(
     across queries for this collection, and invented normalisation is a layer
     that lies. ``client`` and ``embedder`` are injectable so the unit tests run
     with no server and no API key.
+
+    ``collection`` overrides the configured one. Step 12 indexes one collection
+    per chunking strategy so a comparison stays reproducible: recreating a single
+    collection before each run makes "why did semantic lose this question?"
+    unanswerable the moment the next variant is indexed.
     """
     if not query.strip():
         # The empty string embeds fine and retrieves plausible-looking garbage.
@@ -62,7 +68,7 @@ def search(
     client = client or get_client(settings)
 
     hits = client.query_points(
-        collection_name=settings.qdrant_collection,
+        collection_name=collection or settings.qdrant_collection,
         query=embedder(query),
         query_filter=source_filter(source),
         limit=top_k,

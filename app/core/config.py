@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_cache_path: Path = Path("data/processed/embeddings.sqlite")
     generation_model: str = "gpt-4o-mini"
+    chunk_strategy: str = "recursive"
     chunk_size: int = 1000
     chunk_overlap: int = 200
     top_k: int = 5
