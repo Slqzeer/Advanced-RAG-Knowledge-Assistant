@@ -8,8 +8,8 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-16 are done — `v0.6` is tagged. Step 17 (reranking) is next,
-and it now has something to rerank.**
+**Phase 0 and steps 02-17 are done — `v0.7` is tagged. Step 18 (query rewriting) is
+next, and step 17 tells it not to expect a generic model to fix ranking.**
 
 Shipped and verified:
 
@@ -34,6 +34,7 @@ Shipped and verified:
 | Chunking comparison | `app/ingestion/chunk.py` — four strategies behind one registry (`recursive`, `fixed`, `sentence`, `semantic`), one Qdrant collection each, nine runs; `sentence` wins Recall@5 0.776 against the 0.713 baseline and becomes the default, 147 docs → 1 484 chunks |
 | BM25 index | `app/retrieval/bm25.py` — hand-rolled Okapi BM25 with Lucene's IDF variant, built by scrolling the same collection dense search queries, 1 484 chunks, avg length 126 tokens, ~200 ms build / 2 ms per query, 20 tests, no new dependency |
 | Hybrid retrieval | `app/retrieval/search.py` — `RETRIEVERS` keyed `dense`\|`lexical`\|`hybrid`, `rrf()` on ranks only, `matches_filters` giving the lexical branch filter parity; six measured runs. Best fusion row `hybrid-k60-d20`: Recall@5 **0.737** (against 0.776 dense) but Recall@10 **0.829** (against 0.785). The pre-registered rule was not met, so `dense` stays the default |
+| Cross-encoder reranking | `app/retrieval/rerank.py` — `RERANKERS` keyed `flashrank`\|`cohere`, a backend returning only `(index, score)` pairs while `rerank()` owns ordering, tie-breaking and the `score`/`rerank_score` split; `search(rerank=)` orthogonal to `mode`, reachable from all three scripts and `answer_question()`. The ceiling was measured first: the dense d30 pool holds **0.884** Recall@30 against 0.785 at rank 5. Eight measured rows. Best row `rerank-flashrank-dense-d30`: Recall@5 **0.779** (+0.002 on the 0.776 baseline), capture **−0.067**, p50 **1 141 ms** against a 400 ms budget, `code` **−0.100**. All three clauses of the pre-registered rule fail, so `RERANK_MODEL` stays empty. The Cohere rows are unmeasured — no API key |
 | Metadata filtering | `app/ingestion/loader.py`, `app/retrieval/search.py` — `doc_type` derived from the corpus layout, indexed, filterable through a generic `filters=` mapping; per-facet recall and an oracle run recording the ceiling on facet routing at **+0.000 Recall@5** |
 
 The loop is closed, verified and measured: a question goes in, a grounded answer with resolved citations comes out of `scripts/ask.py`, and 38 answerable questions give it a score. No HTTP endpoint yet — that is step 25.
@@ -41,7 +42,7 @@ The loop is closed, verified and measured: a question goes in, a grounded answer
 Four things later steps own:
 
 - **`HTTPException 422` is resolved as a finding, not as a fix.** Steps 14-16 gave the retriever the missing capability — BM25's rank-1 hit for `HTTPException 422` does contain the literal token, and `--mode hybrid` surfaces `reference/exceptions` at rank 2 — and the answer is still an honest "I do not know". The four chunks in the corpus containing `422` are two release notes and an OpenAPI JSON example; none of them explains what the code means. The refusal is correct. No later step owns this: the target was chosen at step 07, before step 11 said where the gap actually was, and `exact` was already the strongest category at 0.892.
-- **Recall@10 minus Recall@5 is now 0.092**, up from 0.009 — RRF fusion opened it tenfold. This was the condition step 17 needed and it is met: 9.2 points of recall now separate rank 5 from rank 10, against 0.9 before, which is exactly what a reranker reorders. **Step 17 is worth running, and it runs on hybrid candidates rather than dense ones.** This is the phase's real result; it is not what the phase set out to achieve. **Step 17 measured the ceiling directly** (three `*-ceiling` rows, collection `chunks`): dense Recall@5 0.785 → Recall@30 0.884 (headroom 0.099); hybrid d30 0.768 → 0.890 (0.123); hybrid d50 0.743 → 0.917 (0.173). Every pool clears the 0.03 go/no-go. Recall@20 equals Recall@30 in all three, so depth 20 is where the pool stops finding anything new — a 30-deep pool costs the cross-encoder 50 % more work for nothing it can reach.
+- **The headroom is real and a generic cross-encoder does not capture it.** Step 17 consumed step 16's `Recall@10 − Recall@5 = 0.092` precondition and replaced it with measurement. The pools do hold the documents: dense d30 goes 0.785 → **0.884** at Recall@30 (headroom 0.099), hybrid d30 0.768 → 0.890 (0.123), hybrid d50 0.743 → **0.917** (0.173). FlashRank recovers none of it — best capture **+0.018**, best absolute Recall@5 **0.779** against a 0.806 bar, for 1 141 ms. Two further facts steps 18-19 should carry: **Recall@20 equals Recall@30 in every pool**, so depth 20 is where these pools stop finding anything new and a 30-deep pool is 50 % more cross-encoder work for nothing reachable; and the reranker **moves precision between categories rather than adding any** — `conceptual` +0.083, `code` −0.100, total +0.002 — because `ms-marco-MiniLM-L-12-v2` is trained on natural-language web passages and promotes prose over code-bearing chunks. **The input for steps 18-19: the gap is not a ranking problem a generic model solves. Do not reach for a bigger reranker; a domain-adapted or code-aware model is the only version of this worth retrying.**
 - **Generation is ~95 % of the latency.** 1.5-3.7 s per question against ~35 ms of warm retrieval. Any latency work before step 23's cache would be optimising the wrong 5 %.
 - **A score threshold cannot carry refusal.** The 7 out-of-corpus questions score 0.305-0.459, the answerable ones 0.341-0.664. Step 22 needs something other than a floor.
 - **Facet routing has a ceiling of zero.** Step 13's oracle — every question filtered to its own ground-truth `doc_type` — moves Recall@5 by +0.000 and Recall@10 by +0.000; the whole aggregate delta (MRR +0.046) is four questions reordered. Only 16 of 38 answerable questions even have single-facet ground truth, and on the other 22 any single-facet filter drops a relevant document by construction. This is the input step 18 needs: do not build a query-side facet router for this corpus.
@@ -65,7 +66,7 @@ Four things later steps own:
 | 12 | Phase 2 — Chunking | `v0.4+` | Four chunking strategies, one winner, chosen by Recall@5. **Done — `sentence`, Recall@5 0.776.** |
 | 13 | Phase 3 — Metadata | `v0.4+` | A derived `doc_type` facet, a generic `filters=` mapping, per-facet recall. **Done — the routing ceiling is +0.000 Recall@5.** |
 | 14-16 | Phase 5-6 — Hybrid + RRF | `v0.5`-`v0.6` | Dense + BM25 fused. **Done — hybrid loses Recall@5 (0.737 vs 0.776) and wins Recall@10 (0.829 vs 0.785); `dense` stays the default, and the Recall@10−Recall@5 gap opens from 0.009 to 0.092.** |
-| 17 | Phase 6 — Reranking | `v0.7` | Top-30 recall, top-5 precision, measured latency cost. |
+| 17 | Phase 6 — Reranking | `v0.7` | Top-30 recall, top-5 precision, measured latency cost. **Done — the pool holds 0.884 Recall@30 against 0.785 at rank 5, and FlashRank captures none of it: Recall@5 0.779 (+0.002), p50 1 141 ms, `code` −0.100; `RERANK_MODEL` stays empty.** |
 | 18-19 | Phase 7-8 — Query transforms | `v0.8`-`v0.9` | "et pour docker ?" resolves against conversation history. |
 | 20 | Phase 9 — Compression | `v1.2` | Same answer quality, fewer context tokens. |
 | 21 | Phase 11 — RAGAS | `v1.3` | Faithfulness and answer relevance, not just retrieval. |
@@ -78,7 +79,7 @@ Four things later steps own:
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-16:
+Detailed, executable plans exist for steps 02-17:
 
 | Step | Plan |
 |---|---|
@@ -95,6 +96,7 @@ Detailed, executable plans exist for steps 02-16:
 | 12 Chunking experiments | [`2026-09-12-step-12-chunking.md`](superpowers/plans/2026-09-12-step-12-chunking.md) |
 | 13 Metadata filtering | [`2026-09-12-step-13-metadata.md`](superpowers/plans/2026-09-12-step-13-metadata.md) |
 | 14-16 Hybrid search and RRF | [`2026-09-13-step-14-16-hybrid-rrf.md`](superpowers/plans/2026-09-13-step-14-16-hybrid-rrf.md), design: [`2026-09-13-hybrid-rrf-design.md`](superpowers/specs/2026-09-13-hybrid-rrf-design.md) |
+| 17 Cross-encoder reranking | [`2026-09-13-step-17-reranking.md`](superpowers/plans/2026-09-13-step-17-reranking.md), design: [`2026-09-13-reranking-design.md`](superpowers/specs/2026-09-13-reranking-design.md) |
 
 **Steps 17-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: which chunking strategy wins, whether BM25 helps this corpus, whether reranking pays for its latency, whether multi-query is worth 4x the cost. Writing those plans now would mean inventing the answers. Each plan gets written at the start of its own step, with step 11's numbers in hand.
 
@@ -125,6 +127,8 @@ app/
 ├── ingestion/embed.py        # 05  texts -> vectors, with a sqlite cache
 ├── retrieval/store.py        # 06  Qdrant collection, upsert
 ├── retrieval/search.py       # 07  query -> scored chunks
+├── retrieval/bm25.py         # 14  hand-rolled Okapi BM25 index
+├── retrieval/rerank.py       # 17  cross-encoder rescoring of a shortlist
 ├── generation/context.py     # 08  chunks -> numbered context block
 ├── generation/llm.py          # 08  single LLM call
 ├── generation/answer.py      # 08  retrieve -> context -> prompt -> Answer

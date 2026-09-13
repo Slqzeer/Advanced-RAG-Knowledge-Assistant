@@ -17,6 +17,7 @@
 - [Découpage — quatre stratégies comparées](#découpage--quatre-stratégies-comparées)
 - [Filtrage par métadonnées — le plafond du routage par facette](#filtrage-par-métadonnées--le-plafond-du-routage-par-facette)
 - [Recherche hybride — BM25, RRF et une règle non atteinte](#recherche-hybride--bm25-rrf-et-une-règle-non-atteinte)
+- [Reranking par cross-encoder — le plafond mesuré, puis la règle non atteinte](#reranking-par-cross-encoder--le-plafond-mesuré-puis-la-règle-non-atteinte)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -36,7 +37,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étapes 14-16 terminées — Recherche hybride BM25 + RRF, mesurée et non promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étape 17 terminée — Reranking par cross-encoder, mesuré et non promu.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -57,6 +58,7 @@ Fonctionnalités disponibles :
 - jeu d'évaluation annoté via `app.evaluation.dataset` et `scripts/validate_dataset.py` : 50 questions, 5 catégories, vérité terrain au niveau document, recoupée avec le corpus nettoyé.
 - recherche lexicale via `app.retrieval.bm25` : index inversé Okapi BM25 écrit à la main (IDF à la Lucene, `k1=1.5`, `b=0.75`), construit en scrollant la collection que la recherche dense interroge déjà, 1 484 chunks, longueur moyenne 126 tokens, ~200 ms de construction et 2 ms par requête, aucune dépendance ajoutée ;
 - fusion des deux retrievers via `app.retrieval.search` : registre `RETRIEVERS` (`dense` | `lexical` | `hybrid`), `rrf()` qui ne consomme que des rangs et jamais les scores, filtres de payload honorés des deux côtés par `matches_filters`, `--mode` sur `search.py`, `ask.py` et `benchmark.py` ;
+- reranking par cross-encoder via `app.retrieval.rerank` : registre `RERANKERS` (`flashrank` | `cohere`) où un backend ne rend que des paires `(index, score)` et où `rerank()` fait seul le tri, les égalités et la reconstruction des `ScoredChunk` ; `search(rerank=)` orthogonal à `mode`, `--rerank` et `--rerank-candidates` sur les trois scripts, `score` du retriever conservé à côté du nouveau `rerank_score` ; `ms-marco-MiniLM-L-12-v2` en ONNX, ~34 Mo téléchargés une fois, ~1 100 ms pour 30 candidats ;
 - métriques et banc d'essai via `app.evaluation.metrics`, `app.evaluation.benchmark` et `scripts/benchmark.py` : Recall@K, Precision@K, MRR, Hit Rate@K et NDCG@K sur des documents dédupliqués, ventilation par catégorie, latence p50/p95, historique versionné dans `data/eval/results.jsonl` avec le commit git de chaque run.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
@@ -906,6 +908,161 @@ qu'une transcription omise.
 | Index BM25 persistant sur disque | si les ~200 ms de construction pèsent — ils ne pèsent pas devant 1,5 à 3,7 s de génération |
 | Sixième combinaison de paramètres | jamais après avoir vu les cinq premières : élargir le balayage pour trouver une ligne favorable est l'abandon silencieux d'une règle pré-enregistrée |
 
+## Reranking par cross-encoder — le plafond mesuré, puis la règle non atteinte
+
+Un cross-encoder lit la question et le chunk **ensemble** et note la paire ; un
+bi-encodeur compare deux vecteurs qui ne se sont jamais rencontrés. Le premier est bien
+plus précis et bien trop lent pour balayer 1 484 chunks, donc il repasse derrière le
+retriever sur les 30 candidats que celui-ci a déjà présélectionnés. C'est toute l'idée
+des deux étages, et c'est pourquoi la **profondeur du vivier** compte ici plus que le
+choix du modèle.
+
+### D'abord le plafond, avant la moindre ligne de reranker
+
+Un reranker réordonne ; il ne récupère pas. Son meilleur Recall@5 possible est le
+Recall@N du vivier qu'on lui tend, et ce projet n'avait jamais mesuré un vivier plus
+profond que 10. Les trois lignes `*-ceiling` répondent à la seule question qui autorisait
+la suite : **y a-t-il quelque chose à réordonner ?**
+
+| Vivier | Mode | Profondeur | Recall@5 | Recall@20 | Recall@30 | Marge | p50 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `dense-d30-ceiling` | dense | 30 | **0,785** | 0,884 | 0,884 | +0,099 | **34 ms** |
+| `hybrid-d30-ceiling` | hybrid | 30 | 0,768 | 0,890 | 0,890 | +0,123 | 40 ms |
+| `hybrid-d50-ceiling` | hybrid | 50 | 0,743 | **0,917** | **0,917** | **+0,173** | 44 ms |
+
+Le seuil de go/no-go était 0,03 de marge ; les trois viviers le franchissent largement.
+**Mais Recall@20 égale Recall@30 partout** : entre le rang 20 et le rang 30, aucun des
+trois viviers ne trouve un seul document de plus. Un vivier de 30 fait donc travailler le
+cross-encoder 50 % de plus pour rien qu'il puisse atteindre.
+
+### La règle de décision, écrite avant le premier run
+
+`RERANK_MODEL` passe de vide au backend gagnant **si et seulement si** les trois clauses
+tiennent : (1) capture de la marge ≥ 0,50 **et** Recall@5 absolu ≥ 0,806 ; (2) aucune
+catégorie ne régresse de plus de 0,05 en Recall@5 contre `exact` 0,892, `code` 0,850,
+`conceptual` 0,733, `multi_doc` 0,594 ; (3) latence p50 de retrieval < 400 ms.
+
+La capture répond à « le cross-encoder fait-il son travail ? », séparément de « le vivier
+valait-il quelque chose ? » :
+
+```
+capture = (Recall@5 reranké − Recall@5 du vivier) / (Recall@30 du vivier − Recall@5 du vivier)
+```
+
+### Les cinq lignes mesurées
+
+| Run | Backend | Vivier | Recall@5 | Capture | p50 | Coût du reranker |
+|---|---|---:|---:|---:|---:|---:|
+| `rerank-flashrank-dense-d10` | flashrank | dense 10 | 0,754 | −0,311 | **270 ms** | +236 ms |
+| `rerank-flashrank-dense-d20` | flashrank | dense 20 | 0,750 | −0,356 | 577 ms | +543 ms |
+| `rerank-flashrank-dense-d30` | flashrank | dense 30 | **0,779** | −0,067 | 1 141 ms | +1 106 ms |
+| `rerank-flashrank-dense-d50` | flashrank | dense 50 | 0,737 | −0,489 | 1 662 ms | +1 628 ms |
+| `rerank-flashrank-hybrid-d30` | flashrank | hybrid 30 | 0,770 | **+0,018** | 1 018 ms | +978 ms |
+
+Le coût du reranker est obtenu par soustraction — `p50` de la ligne rerankée moins `p50`
+de sa ligne `*-ceiling`, mesurées à la même profondeur sur les mêmes 38 questions — donc
+la différence est le cross-encoder et rien d'autre. Aucune instrumentation ajoutée pour
+cela.
+
+### Le verdict : les trois clauses échouent
+
+Meilleure ligne `rerank-flashrank-dense-d30`, Recall@5 **0,779** contre la baseline
+**0,776**, soit **+0,002** là où la clause 1 demandait +0,030. Capture **−0,067** : le
+cross-encoder ne récupère pas la marge, il en perd une fraction. Les quatre deltas par
+catégorie :
+
+| Catégorie | Baseline dense | `rerank-flashrank-dense-d30` | Delta | Clause 2 (−0,05) |
+|---|---:|---:|---:|---|
+| `conceptual` | 0,733 | 0,817 | **+0,083** | passe |
+| `exact` | 0,892 | 0,917 | +0,025 | passe |
+| `multi_doc` | 0,594 | 0,594 | +0,000 | passe |
+| `code` | 0,850 | 0,750 | **−0,100** | **échec** |
+
+Et la clause 3 échoue de très loin : 1 141 ms contre un budget de 400 ms, soit **33 fois**
+la latence du vivier dense seul.
+
+**`RERANK_MODEL` reste donc vide.** Les deux backends, les tests et les huit lignes
+mesurées sont livrés quand même : `--rerank flashrank` est disponible sur les trois
+scripts, mesuré et documenté ; il n'est simplement pas le défaut. La règle n'a pas été
+élargie pour faire passer un chiffre.
+
+### Ce que les chiffres disent, y compris ce qu'on n'attendait pas
+
+**Le reranker déplace la précision d'une catégorie à l'autre, il n'en ajoute pas.**
+`conceptual` gagne 0,083, `code` perd 0,100, et le total bouge de +0,002. C'est le
+résultat le plus net de l'étape et il a une cause lisible : `ms-marco-MiniLM-L-12-v2` est
+entraîné sur des passages web en langue naturelle. Rendu à de la documentation technique,
+il fait exactement ce pour quoi il a été entraîné — il remonte la prose explicative et
+enterre les chunks porteurs de code. La catégorie que l'étape 07 voulait aider est celle
+qu'il dégrade.
+
+**Plus de vivier n'est pas mieux, et le classement n'est même pas monotone.** 0,754 à
+d10, 0,750 à d20, 0,779 à d30, 0,737 à d50. Sur 38 questions ces écarts sont du bruit
+autant que du signal, et c'est précisément le constat : aucune profondeur ne produit un
+gain qui sorte du bruit, alors que la marge disponible est de 0,099. Le vivier contient
+bien les documents — les lignes `*-ceiling` le prouvent — et le cross-encoder ne va pas
+les chercher.
+
+**La marge mesurée ne dit pas qui peut la capturer.** L'étape 16 avait laissé « l'écart
+Recall@10 − Recall@5 vaut 0,092, donc l'étape 17 vaut le coup » comme condition
+d'entrée. La condition était juste et insuffisante : elle établit qu'il existe des
+documents pertinents sous le rang 5, pas qu'un modèle générique saura les distinguer. La
+tâche 1 de cette étape — mesurer le plafond **avant** d'ajouter la moindre dépendance —
+est le bon ordre, et elle aurait pu terminer l'étape à elle seule.
+
+**Le reranking coûte 30 fois le retrieval qu'il corrige.** 34 ms de vivier dense contre
+1 106 ms de cross-encoder, en local, sans réseau. Ce n'est pas rédhibitoire en soi — la
+génération pèse 1,5 à 3,7 s — mais payer une seconde par question pour +0,002 de Recall@5
+n'a pas de défense.
+
+### Les deux lignes Cohere ne sont pas mesurées
+
+Le backend `cohere` est écrit, testé et atteignable par `--rerank cohere` ; il n'a jamais
+été appelé. Aucune `COHERE_API_KEY` n'est configurée sur cette machine, et les deux
+lignes `rerank-cohere-*` de la matrice prévue n'existent donc pas dans
+`data/eval/results.jsonl`. C'est une absence, écrite ici comme telle : **« le modèle local
+gratuit suffit » n'est pas un résultat de cette étape**, puisque le modèle payant n'a pas
+été lancé. Ces deux lignes auraient été les premières du projet impossibles à reproduire
+hors ligne et gratuitement — environ 0,15 $ pour la matrice, 38 recherches par ligne.
+
+Le mapping qui fait tout le risque de ce backend est couvert par des tests malgré
+l'absence de clé : l'API répond avec des **positions** dans la liste qu'on lui a envoyée,
+jamais avec des documents, et un décalage d'un rang apparierait chaque score au mauvais
+chunk en produisant un classement parfaitement plausible qu'aucune métrique agrégée ne
+rattraperait. Le client est donc injectable et ce mapping est le premier test du fichier.
+
+### La transcription `HTTPException 422`, toujours sans vérité terrain
+
+Preuve qualitative, attachée à aucune métrique, et négative pour la troisième étape
+consécutive. Le reranker ne change pas la réponse :
+
+```
+$ uv run python scripts/ask.py "What does HTTPException 422 mean?" --mode hybrid
+I do not have enough information in the provided context to answer this.
+5 retrieved, 5 used, 0 dropped, 0 cited  |  gpt-4o-mini  |  947 tokens  |  1879 ms
+
+$ uv run python scripts/ask.py "What does HTTPException 422 mean?" --mode hybrid --rerank flashrank
+I do not have enough information in the provided context to answer this.
+5 retrieved, 5 used, 0 dropped, 0 cited  |  gpt-4o-mini  |  1050 tokens  |  2732 ms
+```
+
+C'est le résultat attendu et il confirme le diagnostic de l'étape 16 plutôt qu'il ne le
+corrige : les quatre chunks du corpus qui contiennent `422` sont deux notes de version et
+un exemple JSON OpenAPI, et aucun n'explique ce que le code signifie. Réordonner un
+vivier qui ne contient pas la réponse ne produit pas la réponse. Si le reranking avait
+changé cette réponse, ce serait un constat **sur le reranker**, pas une correction.
+
+### Écarté volontairement
+
+| Écarté | À ajouter quand |
+|---|---|
+| `sentence-transformers` / `torch` | jamais pour cette étape : `flashrank` charge le même modèle en ONNX pour une fraction de l'installation, et ce qui s'apprend est identique |
+| L'extra `flashrank[listwise]` | jamais ici : il tire un reranker LLM de 7 Md de paramètres que cette étape n'utilise pas |
+| Ensemble ou fusion de deux rerankers | jamais : un backend à la fois, par décision — deux scores de rerankers fusionnés ne se comparent pas mieux qu'une cosinus et un BM25 |
+| Colonne `rerank_candidates` dans la table de résumé | jamais : le label la porte déjà (`rerank-flashrank-dense-d30`), comme l'étape 16 avait refusé d'y ajouter `rrf_k` |
+| Un `rerank_score` dans l'historique par question | jamais : `score` reste le nombre du retriever et `rerank_score` porte le nouveau, et c'est `rerank_score is not None` qui dit lequel a produit le classement |
+| Sixième profondeur de vivier | jamais après avoir vu les cinq premières, pour la raison exacte de l'étape 16 : élargir un balayage pour trouver une ligne favorable est l'abandon silencieux d'une règle pré-enregistrée |
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -1036,6 +1193,17 @@ uv run python scripts/search.py "HTTPException 422" --top-k 10 --filter doc_type
 uv run python scripts/search.py "HTTPException 422" --mode hybrid
 uv run python scripts/benchmark.py --label "hybrid-k60-d50" --mode hybrid --candidates 50
 
+# Réordonner le vivier avec un cross-encoder — étape 17, désactivé par défaut
+# Le premier appel télécharge ~34 Mo dans data/processed/flashrank/ ; préchauffer hors boucle :
+uv run python -c "from app.core.config import get_settings; from app.retrieval.rerank import warm_up; warm_up('flashrank', get_settings())"
+uv run python scripts/search.py "how do dependencies work" --rerank flashrank --rerank-candidates 20
+uv run python scripts/ask.py "How do I define a dependency?" --mode hybrid --rerank flashrank
+uv run python scripts/benchmark.py --label "rerank-flashrank-dense-d30" --mode dense --rerank flashrank --rerank-candidates 30
+# --rerank-candidates doit être >= --top-k, sans quoi le vivier est plus court que la réponse demandée
+uv run python scripts/benchmark.py --label "rerank-flashrank-dense-d10" --mode dense --rerank flashrank --rerank-candidates 10 --top-k 10
+# --rerank "" force la désactivation même si RERANK_MODEL est renseigné
+uv run python scripts/search.py "how do dependencies work" --rerank ""
+
 # Poser une question et obtenir une réponse sourcée
 uv run python scripts/ask.py "How does dependency injection work in FastAPI?"
 uv run python scripts/ask.py "Comment fonctionne l'injection de dependances dans FastAPI ?" --show-context
@@ -1060,6 +1228,9 @@ uv run python scripts/benchmark.py --summary "chunk-*"
 
 # Tests d'intégration Qdrant (ignorés si le serveur n'est pas joignable)
 uv run pytest -m requires_qdrant
+
+# Test du vrai modèle ONNX (télécharge les poids au premier passage)
+uv run pytest -m requires_model
 
 # Gérer Qdrant
 docker compose up -d qdrant --wait
@@ -1100,7 +1271,7 @@ docker compose down
 - [x] **Phase 3 — Métadonnées** : filtrer et tracer chaque chunk (faite ; `doc_type` indexé et filtrable, plafond du routage mesuré à +0,000 de Recall@5).
 - [x] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG (faite, `v0.4`).
 - [x] **Phase 5 — Recherche hybride** : combiner recherche dense et BM25 (faite ; BM25 maison et fusion RRF mesurés, `dense` reste le défaut — la règle d'acceptation n'est pas atteinte, Recall@5 0,737 contre 0,776, mais Recall@10 passe de 0,785 à 0,829).
-- [ ] **Phase 6 — Reranking** : optimiser la précision des candidats.
+- [x] **Phase 6 — Reranking** : optimiser la précision des candidats (faite ; plafond du vivier mesuré à 0,884 de Recall@30 contre 0,785 au rang 5, FlashRank et Cohere livrés derrière un registre, `RERANK_MODEL` reste vide — +0,002 de Recall@5 pour 1 141 ms et une régression de 0,100 sur `code`).
 - [ ] **Phase 7 — Query rewriting** : rendre les questions conversationnelles autonomes.
 - [ ] **Phase 8 — Multi-query retrieval** : augmenter le recall par expansion de requêtes.
 - [ ] **Phase 9 — Compression contextuelle** : réduire le contexte aux passages pertinents.
@@ -1115,7 +1286,7 @@ docker compose down
 
 ## Résultats
 
-Une valeur absente signifie que l'expérience n'a pas encore été exécutée. Chaque ligne chiffrée vient de [`data/eval/results.jsonl`](data/eval/results.jsonl), produite par la même commande sur le même jeu de questions — voir [Méthode](#méthode).
+Une valeur absente signifie que l'expérience n'a pas encore été exécutée ; « non mesuré » signifie que le code existe mais que le run n'a pas été fait, et pourquoi. Chaque ligne chiffrée vient de [`data/eval/results.jsonl`](data/eval/results.jsonl), produite par la même commande sur le même jeu de questions — voir [Méthode](#méthode).
 
 | Version | Recall@5 | Recall@10 | MRR | Latence | Coût |
 |---|---:|---:|---:|---:|---:|
@@ -1127,13 +1298,18 @@ Une valeur absente signifie que l'expérience n'a pas encore été exécutée. C
 | Oracle de facette (étape 13, plafond) | 0,776 | 0,785 | 0,856 | 63 ms* | — |
 | BM25 seul (étape 14) | 0,605 | 0,632 | 0,570 | 2 ms* | — |
 | Recherche hybride RRF (étapes 15-16) | 0,737 | **0,829** | 0,748 | 83 ms* | — |
-| Reranking | — | — | — | — | — |
+| Plafond du vivier dense d30 (étape 17) | 0,785 | 0,836 | 0,810 | 34 ms* | — |
+| Plafond du vivier hybride d50 (étape 17) | 0,743 | 0,879 | 0,757 | 44 ms* | — |
+| Reranking FlashRank (étape 17) | 0,779 | 0,862 | 0,788 | 1 141 ms* | — |
+| Reranking Cohere (étape 17) | non mesuré***** | non mesuré***** | non mesuré***** | non mesuré***** | ~0,15 $ si lancé***** |
 
 \* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms), `dense-sentence-doctype` et `dense-sentence-oracle-filter` à l'étape 13 (p50 65 et 63 ms, p95 94 et 92 ms — mesurés dans la même session, donc comparables entre eux mais pas à l'étape 12, dont la session était plus rapide sur toute la ligne). `bm25-sentence` et `hybrid-k60-d20` aux étapes 14-16 (p50 2 et 83 ms, p95 4 et 116 ms). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
 
 \*\* Bout en bout via `scripts/ask.py`, sur quatre questions réelles : 851 à 1 021 tokens par appel à `gpt-4o-mini`, soit environ 0,0003 $ l'unité aux tarifs affichés. La génération domine, elle pèse plus de 95 % du temps de réponse.
 
 \*\*\* Sept questions réelles, 923 à 1 289 tokens par appel. La validation des citations est du traitement de chaîne en mémoire et ne se mesure pas à côté de l'aller-retour réseau ; la fourchette s'élargit vers le bas parce qu'un refus est court à générer, et vers le haut parce que le prompt v2 est plus long que le v1. Les métriques de qualité restent vides jusqu'à l'étape 11.
+
+\*\*\*\*\* Le backend `cohere` est écrit et testé mais n'a jamais été appelé : aucune `COHERE_API_KEY` n'est configurée. Les deux lignes `rerank-cohere-*` auraient coûté environ 0,15 $ au total (38 recherches par ligne) et auraient été les premières lignes du projet non reproductibles hors ligne. « Le modèle local gratuit suffit » n'est donc **pas** un résultat de cette étape.
 
 \*\*\*\* Coût total de l'étape 12, unique et non récurrent : neuf indexations complètes du corpus plus la vectorisation phrase à phrase que `semantic` exige, aux tarifs `text-embedding-3-small`. Le cache d'embeddings est partagé entre les stratégies — il est clé sur `sha256(modèle + texte)` — donc seuls les spans réellement nouveaux ont été payés. Les runs suivants sortent du cache.
 
