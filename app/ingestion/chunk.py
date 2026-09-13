@@ -226,6 +226,18 @@ def _sentence_units(text: str, protected: list[tuple[int, int]]) -> list[tuple[i
     return units
 
 
+def sentence_spans(text: str) -> list[tuple[int, int]]:
+    """One span per sentence, tiling ``text``; a fenced code block is one span.
+
+    Public because step 20's compressor must split exactly as this module does.
+    Two splitters that are "the same for now" are two splitters that diverge at
+    the next edit — and the thing that would diverge first is the fence rule,
+    which is the one protecting the ``code`` category that steps 17 and 19 each
+    measured a reranker destroying.
+    """
+    return _sentence_units(text, _protected_spans(text))
+
+
 def _cores(
     units: list[tuple[int, int]], stride: int, forced: frozenset[int] | set[int] = frozenset()
 ) -> list[tuple[int, int]]:
@@ -276,7 +288,7 @@ def split_sentences(
     _check_overlap(chunk_size, overlap)
     if not text.strip():
         return []
-    units = _sentence_units(text, _protected_spans(text))
+    units = sentence_spans(text)
     return _pack(units, _cores(units, chunk_size - overlap), chunk_size, overlap)
 
 

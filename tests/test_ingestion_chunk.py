@@ -10,8 +10,11 @@ from app.ingestion.chunk import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
     STRATEGIES,
+    _protected_spans,
+    _sentence_units,
     chunk_document,
     chunk_documents,
+    sentence_spans,
     split_fixed,
     split_semantic,
     split_sentences,
@@ -424,3 +427,17 @@ def test_chunks_inherit_the_documents_doc_type() -> None:
     )
     assert chunks
     assert {chunk.doc_type for chunk in chunks} == {"deployment"}
+
+
+def test_sentence_spans_matches_the_private_splitter() -> None:
+    text = "One. Two. Three.\n\n```py\nx = 1.  # not a boundary\ny = 2.\n```\n\nFour."
+    assert sentence_spans(text) == _sentence_units(text, _protected_spans(text))
+
+
+def test_sentence_spans_keeps_a_code_fence_in_one_span() -> None:
+    text = "Intro sentence. \n\n```py\na = 1.\nb = 2.\n```\n\nOutro sentence."
+    spans = sentence_spans(text)
+    fence_start, fence_end = text.index("```py"), text.index("```\n\nOutro") + 3
+    # Exactly one span contains the whole fence; none starts or ends inside it.
+    assert sum(1 for lo, hi in spans if lo <= fence_start and hi >= fence_end) == 1
+    assert not any(fence_start < lo < fence_end or fence_start < hi < fence_end for lo, hi in spans)
