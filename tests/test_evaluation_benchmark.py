@@ -166,15 +166,25 @@ def test_the_summary_keeps_one_row_per_matching_label() -> None:
     ]
     rows = summarise(history, "chunk-*")
     assert [row[0] for row in rows] == ["chunk-fixed-1000-200", "chunk-sentence-1000-200"]
-    assert [row[2] for row in rows] == ["fixed", "sentence"]
-    assert rows[0][5] == "0.500"
+    assert [row[3] for row in rows] == ["fixed", "sentence"]
+    assert rows[0][6] == "0.500"
 
 
 def test_the_summary_keeps_only_the_last_run_of_a_repeated_label() -> None:
     history = [history_row("chunk-fixed-1000-200", 0.5), history_row("chunk-fixed-1000-200", 0.9)]
     rows = summarise(history, "chunk-*")
     assert len(rows) == 1
-    assert rows[0][5] == "0.900"
+    assert rows[0][6] == "0.900"
+
+
+def test_the_rerank_column_reads_as_absent_for_a_row_that_had_none() -> None:
+    """Every row written before step 17 genuinely had no reranker; an empty cell
+    would read as a number that failed to load."""
+    history = [
+        history_row("chunk-a", 0.5),
+        history_row("chunk-b", 0.5, rerank="flashrank"),
+    ]
+    assert [row[2] for row in summarise(history, "chunk-*")] == ["-", "flashrank"]
 
 
 def test_a_glob_matching_nothing_summarises_nothing() -> None:

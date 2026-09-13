@@ -75,6 +75,7 @@ class BenchmarkResult:
 SUMMARY_COLUMNS = (
     "label",
     "mode",
+    "rerank",
     "strategy",
     "size",
     "overlap",
@@ -102,6 +103,9 @@ def summarise(history: Sequence[Mapping[str, Any]], pattern: str) -> list[list[s
             # "dense" rather than "?": every row written before step 14 genuinely
             # was a dense run.
             str(row["config"].get("mode", "dense")),
+            # "-" rather than "": every row written before step 17 genuinely had
+            # no reranker, and an empty cell reads as a missing value.
+            str(row["config"].get("rerank") or "-"),
             str(row["config"].get("strategy", "?")),
             str(row["config"].get("chunk_size", "?")),
             str(row["config"].get("chunk_overlap", "?")),

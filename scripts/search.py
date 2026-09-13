@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.retrieval.rerank import RERANKERS  # noqa: E402
 from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 
 PREVIEW = 200
@@ -32,13 +33,28 @@ def main() -> int:
         help="repeatable; e.g. --filter doc_type=tutorial --filter doc_type=tutorial,advanced",
     )
     parser.add_argument("--mode", choices=sorted(RETRIEVERS), help="default: RETRIEVAL_MODE")
+    parser.add_argument(
+        "--rerank",
+        choices=["", *sorted(RERANKERS)],
+        help='cross-encoder that reorders the pool; default: RERANK_MODEL, "" is off',
+    )
+    parser.add_argument(
+        "--rerank-candidates",
+        type=int,
+        help="how deep the pool goes into the cross-encoder; default: RERANK_CANDIDATES",
+    )
     args = parser.parse_args()
     # The corpus is full of emoji and the Windows console defaults to cp1252.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
     started = time.perf_counter()
     results = search(
-        args.query, top_k=args.top_k, mode=args.mode, filters=parse_filters(args.filter)
+        args.query,
+        top_k=args.top_k,
+        mode=args.mode,
+        rerank=args.rerank,
+        rerank_candidates=args.rerank_candidates,
+        filters=parse_filters(args.filter),
     )
     elapsed = time.perf_counter() - started
 
@@ -46,7 +62,14 @@ def main() -> int:
     for scored in results:
         chunk = scored.chunk
         text = " ".join(chunk.text.split())
-        print(f"{scored.rank}. {scored.score:.4f}  {chunk.document_id}  [{chunk.section or '-'}]")
+        # The asterisk marks a rerank score — a different scale from a cosine, and
+        # comparing the two by eye is the mistake it exists to prevent.
+        score = (
+            f"{scored.rerank_score:.4f}*"
+            if scored.rerank_score is not None
+            else f"{scored.score:.4f}"
+        )
+        print(f"{scored.rank}. {score}  {chunk.document_id}  [{chunk.section or '-'}]")
         print(f"   {text[:PREVIEW]}{'...' if len(text) > PREVIEW else ''}\n")
     return 0
 

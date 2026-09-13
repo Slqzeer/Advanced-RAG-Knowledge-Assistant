@@ -195,3 +195,29 @@ def test_an_empty_question_is_rejected_before_anything_is_spent(question: str) -
 def test_an_empty_model_response_fails_loudly() -> None:
     with pytest.raises(ValueError, match="answer"):
         ask(llm=FakeLLM(text="  "))
+
+
+def test_rerank_is_threaded_to_the_retriever() -> None:
+    """The measured winner has to reach the answer, not only the benchmark."""
+    retriever = FakeRetriever()
+    answer_question(
+        "how do dependencies work",
+        rerank="flashrank",
+        rerank_candidates=30,
+        retriever=retriever,
+        llm=FakeLLM(),
+        settings=SETTINGS,
+    )
+    assert retriever.calls[0]["rerank"] == "flashrank"
+    assert retriever.calls[0]["rerank_candidates"] == 30
+
+
+def test_no_rerank_still_reaches_the_retriever_as_none() -> None:
+    """search() reads RERANK_MODEL when it gets None, so answer_question must
+    pass None through rather than dropping the keyword — otherwise a configured
+    default would apply to the benchmark and not to ask.py."""
+    retriever = FakeRetriever()
+    answer_question(
+        "how do dependencies work", retriever=retriever, llm=FakeLLM(), settings=SETTINGS
+    )
+    assert retriever.calls[0]["rerank"] is None

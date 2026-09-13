@@ -33,6 +33,8 @@ def answer_question(
     *,
     top_k: int | None = None,
     mode: str | None = None,
+    rerank: str | None = None,
+    rerank_candidates: int | None = None,
     filters: Filters | None = None,
     max_context_chars: int = MAX_CONTEXT_CHARS,
     strict: bool = False,
@@ -49,8 +51,9 @@ def answer_question(
     ``strict`` turns an invented citation from a warning into a ``ValueError``,
     which is what an evaluation run wants and what a demo does not.
 
-    ``mode`` selects the retriever; it is threaded straight through so the
-    measured winner of step 16 reaches the answer, not only the benchmark.
+    ``mode`` selects the retriever and ``rerank`` the cross-encoder that reorders
+    its output; both are threaded straight through so the measured winners of
+    steps 16 and 17 reach the answer, not only the benchmark.
     """
     if not question.strip():
         raise ValueError("question is empty")
@@ -61,7 +64,13 @@ def answer_question(
     started = time.perf_counter()
 
     chunks = retriever(
-        question, top_k=top_k or settings.top_k, mode=mode, filters=filters, settings=settings
+        question,
+        top_k=top_k or settings.top_k,
+        mode=mode,
+        rerank=rerank,
+        rerank_candidates=rerank_candidates,
+        filters=filters,
+        settings=settings,
     )
     context, sources, dropped = build_context(chunks, max_chars=max_context_chars)
     # Counted before validation trims ``sources`` to the cited subset: how many

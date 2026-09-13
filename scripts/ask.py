@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.generation.answer import answer_question  # noqa: E402
 from app.generation.context import build_context  # noqa: E402
 from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE  # noqa: E402
+from app.retrieval.rerank import RERANKERS  # noqa: E402
 from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 
 
@@ -33,6 +34,16 @@ def main() -> int:
     )
     parser.add_argument("--mode", choices=sorted(RETRIEVERS), help="default: RETRIEVAL_MODE")
     parser.add_argument(
+        "--rerank",
+        choices=["", *sorted(RERANKERS)],
+        help='cross-encoder that reorders the pool; default: RERANK_MODEL, "" is off',
+    )
+    parser.add_argument(
+        "--rerank-candidates",
+        type=int,
+        help="how deep the pool goes into the cross-encoder; default: RERANK_CANDIDATES",
+    )
+    parser.add_argument(
         "--show-context", action="store_true", help="print the prompt that was sent"
     )
     parser.add_argument(
@@ -46,13 +57,26 @@ def main() -> int:
     if args.show_context:
         # Rebuilt rather than returned by answer_question: the prompt is a
         # debugging artefact, not part of the API contract step 25 serves.
-        chunks = search(args.question, top_k=args.top_k or 5, mode=args.mode, filters=filters)
+        chunks = search(
+            args.question,
+            top_k=args.top_k or 5,
+            mode=args.mode,
+            rerank=args.rerank,
+            rerank_candidates=args.rerank_candidates,
+            filters=filters,
+        )
         context, _, _ = build_context(chunks)
         print(f"--- system ---\n{SYSTEM_PROMPT}\n")
         print(f"--- user ---\n{USER_TEMPLATE.format(context=context, question=args.question)}\n")
 
     answer = answer_question(
-        args.question, top_k=args.top_k, mode=args.mode, filters=filters, strict=args.strict
+        args.question,
+        top_k=args.top_k,
+        mode=args.mode,
+        rerank=args.rerank,
+        rerank_candidates=args.rerank_candidates,
+        filters=filters,
+        strict=args.strict,
     )
 
     print(f"{answer.answer}\n")

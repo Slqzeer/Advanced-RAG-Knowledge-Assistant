@@ -33,6 +33,7 @@ from app.evaluation.benchmark import (  # noqa: E402
 from app.evaluation.dataset import load_dataset  # noqa: E402
 from app.models.chunks import ScoredChunk  # noqa: E402
 from app.retrieval.bm25 import default_index  # noqa: E402
+from app.retrieval.rerank import RERANKERS, warm_up  # noqa: E402
 from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
@@ -172,6 +173,16 @@ def main() -> int:
     parser.add_argument("--collection", help="default: QDRANT_COLLECTION")
     parser.add_argument("--mode", choices=sorted(RETRIEVERS), help="default: RETRIEVAL_MODE")
     parser.add_argument(
+        "--rerank",
+        choices=["", *sorted(RERANKERS)],
+        help='cross-encoder that reorders the pool; default: RERANK_MODEL, "" is off',
+    )
+    parser.add_argument(
+        "--rerank-candidates",
+        type=int,
+        help="how deep the pool goes into the cross-encoder; default: RERANK_CANDIDATES",
+    )
+    parser.add_argument(
         "--candidates",
         type=int,
         help="per-branch depth before fusion; default: RETRIEVAL_CANDIDATES",
@@ -221,6 +232,12 @@ def main() -> int:
         # stop meaning per-query retrieval latency, which is all it is used for.
         default_index(settings, collection)
 
+    reranker = args.rerank if args.rerank is not None else settings.rerank_model
+    if reranker:
+        # Same reason as the BM25 build above: a 1-3 s model load charged to
+        # question 1 would make the p50 column stop meaning per-query latency.
+        warm_up(reranker, settings)
+
     def retrieve(text: str) -> list[ScoredChunk]:
         filters: dict[str, str | list[str]] = dict(base_filters)
         if facet := oracle.get(text):
@@ -231,6 +248,8 @@ def main() -> int:
             mode=mode,
             candidates=args.candidates,
             rrf_k=args.rrf_k,
+            rerank=args.rerank,
+            rerank_candidates=args.rerank_candidates,
             filters=filters or None,
             collection=collection,
             settings=settings,
@@ -246,6 +265,8 @@ def main() -> int:
             "mode": mode,
             "candidates": args.candidates or settings.retrieval_candidates,
             "rrf_k": args.rrf_k or settings.rrf_k,
+            "rerank": args.rerank or settings.rerank_model or None,
+            "rerank_candidates": args.rerank_candidates or settings.rerank_candidates,
             "filters": base_filters or None,
             "oracle_filter": args.oracle_filter,
             "dataset": str(args.dataset),
