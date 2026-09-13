@@ -15,7 +15,9 @@ rebuilding it from git history later is miserable, so it is committed.
 
 import argparse
 import json
+import statistics
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,10 +33,12 @@ from app.evaluation.benchmark import (  # noqa: E402
     summarise,
 )
 from app.evaluation.dataset import load_dataset  # noqa: E402
+from app.generation.llm import complete  # noqa: E402
 from app.models.chunks import ScoredChunk  # noqa: E402
 from app.retrieval.bm25 import default_index  # noqa: E402
 from app.retrieval.rerank import RERANKERS, warm_up  # noqa: E402
 from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
+from app.retrieval.transform import TRANSFORMS  # noqa: E402
 
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
 HISTORY = Path("data/eval/results.jsonl")
@@ -44,6 +48,17 @@ HISTORY = Path("data/eval/results.jsonl")
 # every existing invocation is unchanged and no past row is invalidated.
 KS = (1, 3, 5, 10, 20, 30)
 CATEGORY_COLUMNS = ("recall@5", "recall@10", "precision@5", "mrr", "ndcg@5")
+
+
+def category_columns(ks: list[int]) -> list[str]:
+    """CATEGORY_COLUMNS minus whatever this run's --top-k never computed.
+
+    run_benchmark filters ks to those <= top_k, so `--top-k 5` produces no
+    recall@10 and a hardcoded column list raises KeyError on a run that is
+    otherwise fine.
+    """
+    computed = {"mrr", *(f"{m}@{k}" for m in ("recall", "precision", "ndcg") for k in ks)}
+    return [column for column in CATEGORY_COLUMNS if column in computed]
 
 
 def table(headers: list[str], rows: list[list[str]]) -> str:
@@ -81,14 +96,15 @@ def print_result(result: BenchmarkResult) -> None:
 
     # The per-category table is the point of the exercise: one overall Recall@5
     # hides which kind of question is actually broken.
+    columns = category_columns(result.ks)
     print(
         table(
-            ["Category", "n", *CATEGORY_COLUMNS],
+            ["Category", "n", *columns],
             [
                 [
                     category,
                     f"{scores['questions']:.0f}",
-                    *[f"{scores[column]:.3f}" for column in CATEGORY_COLUMNS],
+                    *[f"{scores[column]:.3f}" for column in columns],
                 ]
                 for category, scores in result.per_category.items()
             ],
@@ -100,12 +116,12 @@ def print_result(result: BenchmarkResult) -> None:
         print()
         print(
             table(
-                ["doc_type", "n", *CATEGORY_COLUMNS],
+                ["doc_type", "n", *columns],
                 [
                     [
                         facet,
                         f"{scores['questions']:.0f}",
-                        *[f"{scores[column]:.3f}" for column in CATEGORY_COLUMNS],
+                        *[f"{scores[column]:.3f}" for column in columns],
                     ]
                     for facet, scores in result.per_doc_type.items()
                 ],
@@ -119,6 +135,30 @@ def load_history(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+class RecordingLLM:
+    """`complete`, plus a note of what it said and how long it took, per question.
+
+    Keyed on the user message because both transforms send the question verbatim
+    as their user message, so the key is exact rather than order-coupled: a
+    question that fails mid-run cannot shift every later row by one.
+
+    The *raw* completion is kept, not the parsed query list. A chatty preamble or
+    an empty response is then visible in the history exactly as the model
+    produced it, which is what makes expand()'s fallback inspectable instead of
+    silent — and it needs no second copy of the parser living out here.
+    """
+
+    def __init__(self) -> None:
+        self.seen: dict[str, tuple[str, float, int]] = {}
+
+    def __call__(self, system: str, user: str, **kwargs: Any) -> tuple[str, dict[str, int]]:
+        started = time.perf_counter()
+        text, usage = complete(system, user, **kwargs)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        self.seen[user] = (text, elapsed_ms, usage.get("total_tokens", 0))
+        return text, usage
 
 
 def print_comparison(result: BenchmarkResult, label: str, history: list[dict[str, Any]]) -> int:
@@ -183,6 +223,14 @@ def main() -> int:
         help="how deep the pool goes into the cross-encoder; default: RERANK_CANDIDATES",
     )
     parser.add_argument(
+        "--transform",
+        choices=["", *sorted(TRANSFORMS)],
+        help='query transform applied before retrieval; default: QUERY_TRANSFORM, "" is off',
+    )
+    parser.add_argument(
+        "--transform-n", type=int, help="queries `multi` produces, original included; MULTI_QUERY_N"
+    )
+    parser.add_argument(
         "--candidates",
         type=int,
         help="per-branch depth before fusion; default: RETRIEVAL_CANDIDATES",
@@ -238,6 +286,9 @@ def main() -> int:
         # question 1 would make the p50 column stop meaning per-query latency.
         warm_up(reranker, settings)
 
+    transform = args.transform if args.transform is not None else settings.query_transform
+    recorder = RecordingLLM() if transform else None
+
     def retrieve(text: str) -> list[ScoredChunk]:
         filters: dict[str, str | list[str]] = dict(base_filters)
         if facet := oracle.get(text):
@@ -250,6 +301,9 @@ def main() -> int:
             rrf_k=args.rrf_k,
             rerank=args.rerank,
             rerank_candidates=args.rerank_candidates,
+            transform=args.transform,
+            transform_n=args.transform_n,
+            llm=recorder,
             filters=filters or None,
             collection=collection,
             settings=settings,
@@ -267,6 +321,8 @@ def main() -> int:
             "rrf_k": args.rrf_k or settings.rrf_k,
             "rerank": args.rerank or settings.rerank_model or None,
             "rerank_candidates": args.rerank_candidates or settings.rerank_candidates,
+            "transform": transform or None,
+            "transform_n": args.transform_n or settings.multi_query_n,
             "filters": base_filters or None,
             "oracle_filter": args.oracle_filter,
             "dataset": str(args.dataset),
@@ -280,6 +336,26 @@ def main() -> int:
         },
         abstention_threshold=args.abstention_threshold,
     )
+    if recorder:
+        # Merged after the fact rather than widened into run_benchmark: the
+        # retriever seam is `str -> list[ScoredChunk]` and four steps are built
+        # on it. Questions are keyed by text, as --oracle-filter already does.
+        by_text = {question.question: question.question_id for question in questions}
+        outputs = {by_text[text]: value for text, value in recorder.seen.items() if text in by_text}
+        for row in result.per_question:
+            if found := outputs.get(row["question_id"]):
+                row["transform_output"], row["transform_ms"], row["transform_tokens"] = found
+        timings = [row["transform_ms"] for row in result.per_question if "transform_ms" in row]
+        tokens = [
+            row["transform_tokens"] for row in result.per_question if "transform_tokens" in row
+        ]
+        if timings:
+            print(
+                f"\nTransform: p50 {statistics.median(timings):.0f} ms"
+                f" of {result.latency_p50_ms:.0f} ms total p50"
+                f"  |  {statistics.mean(tokens):.0f} tokens/question"
+            )
+
     print_result(result)
 
     status = 0

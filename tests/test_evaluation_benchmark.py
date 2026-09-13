@@ -5,9 +5,12 @@ from typing import Any
 
 import pytest
 
-from app.evaluation.benchmark import run_benchmark, summarise
+from app.evaluation.benchmark import SUMMARY_COLUMNS, run_benchmark, summarise
 from app.evaluation.dataset import EvalQuestion
 from app.models.chunks import Chunk, ScoredChunk
+
+STRATEGY = SUMMARY_COLUMNS.index("strategy")
+RECALL5 = SUMMARY_COLUMNS.index("recall@5")
 
 
 def chunk(document_id: str, index: int = 0) -> Chunk:
@@ -166,15 +169,15 @@ def test_the_summary_keeps_one_row_per_matching_label() -> None:
     ]
     rows = summarise(history, "chunk-*")
     assert [row[0] for row in rows] == ["chunk-fixed-1000-200", "chunk-sentence-1000-200"]
-    assert [row[3] for row in rows] == ["fixed", "sentence"]
-    assert rows[0][6] == "0.500"
+    assert [row[STRATEGY] for row in rows] == ["fixed", "sentence"]
+    assert rows[0][RECALL5] == "0.500"
 
 
 def test_the_summary_keeps_only_the_last_run_of_a_repeated_label() -> None:
     history = [history_row("chunk-fixed-1000-200", 0.5), history_row("chunk-fixed-1000-200", 0.9)]
     rows = summarise(history, "chunk-*")
     assert len(rows) == 1
-    assert rows[0][6] == "0.900"
+    assert rows[0][RECALL5] == "0.900"
 
 
 def test_the_rerank_column_reads_as_absent_for_a_row_that_had_none() -> None:
@@ -249,3 +252,18 @@ def test_deep_ks_separate_a_rank_25_hit_from_a_rank_5_one() -> None:
     assert result.aggregate["recall@30"] == pytest.approx(1.0)
     assert result.aggregate["recall@20"] == pytest.approx(0.0)
     assert result.aggregate["recall@5"] == pytest.approx(0.0)
+
+
+def test_a_row_written_before_step_18_reports_no_transform() -> None:
+    """An empty cell reads as a missing value; "-" reads as "there wasn't one"."""
+    history = [
+        {
+            "label": "dense-sentence",
+            "config": {"mode": "dense", "strategy": "sentence"},
+            "aggregate": {"recall@5": 0.776},
+            "per_category": {},
+            "latency_p50_ms": 35.0,
+        }
+    ]
+    [row] = summarise(history, "dense-*")
+    assert row[SUMMARY_COLUMNS.index("transform")] == "-"

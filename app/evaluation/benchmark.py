@@ -76,6 +76,7 @@ SUMMARY_COLUMNS = (
     "label",
     "mode",
     "rerank",
+    "transform",
     "strategy",
     "size",
     "overlap",
@@ -106,6 +107,9 @@ def summarise(history: Sequence[Mapping[str, Any]], pattern: str) -> list[list[s
             # "-" rather than "": every row written before step 17 genuinely had
             # no reranker, and an empty cell reads as a missing value.
             str(row["config"].get("rerank") or "-"),
+            # "-" rather than "": every row written before step 18 genuinely had
+            # no transform, and an empty cell reads as a missing value.
+            str(row["config"].get("transform") or "-"),
             str(row["config"].get("strategy", "?")),
             str(row["config"].get("chunk_size", "?")),
             str(row["config"].get("chunk_overlap", "?")),
