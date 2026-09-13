@@ -38,7 +38,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étapes 18-19 terminées — Transformations de requête, mesurées et non promues.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -62,6 +62,8 @@ Fonctionnalités disponibles :
 - reranking par cross-encoder via `app.retrieval.rerank` : registre `RERANKERS` (`flashrank` | `cohere`) où un backend ne rend que des paires `(index, score)` et où `rerank()` fait seul le tri, les égalités et la reconstruction des `ScoredChunk` ; `search(rerank=)` orthogonal à `mode`, `--rerank` et `--rerank-candidates` sur les trois scripts, `score` du retriever conservé à côté du nouveau `rerank_score` ; `ms-marco-MiniLM-L-12-v2` en ONNX, ~34 Mo téléchargés une fois, ~1 100 ms pour 30 candidats ;
 - transformations de requête via `app.retrieval.transform` : registre `TRANSFORMS` (`rewrite` | `multi`) où l'analyse ligne à ligne, le plafonnement, la déduplication et le repli sur la requête originale sont possédés une seule fois pour les deux entrées ; `search(transform=)` orthogonal à `mode` et `rerank`, qui lance le retriever une fois par requête produite et fusionne les classements avec le `rrf()` de l'étape 16 ; `contextualize()` volontairement hors du registre, appelée depuis `answer_question(history=)` ; `--transform`, `--transform-n` sur les trois scripts et `--history` sur `ask.py` ; aucune dépendance ajoutée ;
 - fixture conversationnelle via `data/eval/conversations.jsonl` et `scripts/benchmark_conversations.py` : dix suivis référentiels annotés au niveau document, `EvalConversation` qui hérite de tous les validateurs du jeu figé, et deux lignes `conv-raw` / `conv-rewrite` dont l'écart est le chiffre que l'étape 18 existe pour produire ;
+- compression contextuelle via `app.generation.compress` : registre `COMPRESSORS` (`embedding`) où une entrée ne fait que *noter* des unités et où `compress()` possède seul le découpage, le budget glouton, le réassemblage dans l'ordre du document avec marqueur `[…]` et la reconstruction des `ScoredChunk` ; `sentence_spans()` promu hors de `chunk.py` pour que le compresseur découpe exactement comme l'indexeur, bloc de code clôturé compris ; branché dans `answer_question()` **entre** `search()` et `build_context()`, `--compress`, `--compress-candidates` et `--compress-budget` sur `ask.py` et `benchmark.py` ; +79 ms p50 pour ~200 phrases, cache sqlite réutilisé, aucune dépendance ajoutée ;
+- banc d'essai côté réponse via `scripts/benchmark_answers.py` : taux de refus, caractères de contexte et `prompt_tokens` réellement facturés, une ligne par run dans `data/eval/answers.jsonl`, séparé de `results.jsonl` dont les lignes sont des runs de retrieval ;
 - métriques et banc d'essai via `app.evaluation.metrics`, `app.evaluation.benchmark` et `scripts/benchmark.py` : Recall@K, Precision@K, MRR, Hit Rate@K et NDCG@K sur des documents dédupliqués, ventilation par catégorie, latence p50/p95, historique versionné dans `data/eval/results.jsonl` avec le commit git de chaque run.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
@@ -682,14 +684,17 @@ attribuerait donc exactement le score du découpage enfant qu'il enveloppe. Publ
 chiffre serait publier une mesure sans information dedans.
 
 Ce qui le mesure vraiment, ce sont le nombre de tokens de contexte et la qualité de la
-réponse — les métriques des étapes 20 et 21. Il y est évalué, pas ici.
+réponse. **L'étape 20 a mesuré les deux et ne l'a pas évalué**, délibérément : à budget fixe, le
+parent-child dispute à la compression les mêmes caractères au lieu de s'y composer, et il demande
+un identifiant de parent dans chaque payload — une ré-indexation. Il revient à l'étape 21, quand
+la qualité de réponse aura un juge.
 
 ### Écarté volontairement
 
 | Écarté | À ajouter quand |
 |---|---|
-| Parent-child retrieval | étape 20 — ses métriques sont les tokens de contexte et la qualité de réponse, le Recall@5 y est aveugle |
-| Tailles de chunk en tokens | étape 20, quand une limite de contexte contraindra vraiment |
+| Parent-child retrieval | **plus l'étape 20, qui a fermé sans lui** — c'est l'échange inverse de la compression : il *agrandit* le contexte au lieu de le rétrécir, donc à budget fixe il lui dispute les mêmes caractères au lieu de s'y composer, et il exige un identifiant de parent dans chaque payload, c'est-à-dire une ré-indexation. À l'étape 21, avec la qualité de réponse pour juge |
+| Tailles de chunk en tokens | étape 21 également : l'étape 20 a mesuré que la limite de contexte ne contraint toujours pas, et a retiré la prédiction qui l'annonçait |
 | La grille complète des 24 runs | la courbe de taille du gagnant n'est pas plate **et** une interaction stratégie × taille devient plausible |
 | Réglage du centile de `semantic` | jamais sur ce corpus : `semantic` est à 0,026 du gagnant et son gain tombe sur les mauvaises catégories, le centile n'est pas ce qui le décide |
 | Annotation de pertinence au niveau chunk | jamais — l'annotation au niveau document est exactement ce qui rend deux découpages comparables |
@@ -1224,6 +1229,232 @@ la ligne perd et qu'il n'y a rien à attribuer.
 | Chaîner deux transformations | jamais : une à la fois, par décision, comme `RETRIEVAL_MODE` et `RERANK_MODEL` |
 | `HyDE` (document hypothétique) | jamais dans cette étape : une quatrième transformation essayée après trois verdicts négatifs serait un élargissement de règle déguisé |
 | Modifier `data/eval/questions.jsonl` | jamais : le jeu est figé depuis l'étape 10, et la fixture conversationnelle est un fichier **séparé** |
+
+## Compression contextuelle — le premier verdict positif, et ce qu'il a fallu corriger pour l'obtenir
+
+`information.md` présente la phase 9 comme une réduction de tokens. Sur ce corpus, cela ne
+mesure rien : cinq chunks `sentence` font environ 4 000 caractères contre un `MAX_CONTEXT_CHARS`
+de 12 000 qui n'a jamais contraint une seule fois, et 40 % de moins sur un prompt de 1 000 tokens
+vaut 0,0001 $. La phase est donc reformulée, et c'est la reformulation qui la rend intéressante :
+**ce que la compression achète ici, c'est l'écart que les étapes 17 à 19 ont prouvé qu'aucun
+étage de classement ne pouvait combler.** Un reranker réordonne, il ne récupère pas ; une
+transformation de requête change ce qu'on demande, pas ce qui tient dans le prompt. Rendre un
+chunk *moins cher* est le dernier levier qui fasse arriver les rangs 6 à 20 devant le modèle.
+
+Le mécanisme tient en une fonction. `compress()` découpe chaque chunk retrouvé avec le
+`sentence_spans()` **promu hors de `chunk.py`** — le même découpage que l'indexeur, pour que deux
+découpeurs « identiques pour l'instant » ne divergent jamais — note chaque phrase contre la
+question avec le `embed_texts()` et son cache sqlite déjà là, garde gloutonnement les meilleures
+jusqu'au budget, et réassemble **dans l'ordre du document** avec un marqueur `[…]` à chaque
+coupure. Une entrée de `COMPRESSORS` ne fait que *noter* ; le découpage, le budget, le
+réassemblage et la reconstruction du modèle figé appartiennent à `compress()`, exactement comme
+`expand()` possède l'analyse et le plafonnement pour ses deux transformations. Aucune dépendance
+ajoutée. Aucun tokeniseur : le budget est en **caractères**, le chiffre publié est le
+`usage.prompt_tokens` renvoyé par l'API.
+
+### D'abord la taille réelle du contexte, avant la moindre ligne de compresseur
+
+Le budget ne pouvait pas être estimé : il devait être mesuré, parce que c'est lui la variable
+fixe de toute l'étape. `scripts/benchmark_answers.py` — le bras côté réponse, séparé de
+`scripts/benchmark.py` pour la raison qui sépare déjà `benchmark_conversations.py` : la couture
+de `run_benchmark` est `str -> list[ScoredChunk]` et produit des métriques de classement, pas des
+refus ni des tokens facturés — donne le chiffre sur les 38 questions répondables :
+
+| | p50 | p95 |
+|---|---:|---:|
+| Bloc de contexte entier | **4 000** car. | 4 853 car. |
+| dont en-têtes `[n] source — titre` | 312 car. | — |
+| **Texte de chunk seul** | **3 688** car. | — |
+| `prompt_tokens` réellement facturés | 1 094 | 1 343 |
+
+L'estimation de la spécification (~4 000) était juste, mais **sur la mauvaise grandeur**.
+`compress()` budgète le texte de chunk ; les en-têtes sont ajoutés après par `build_context()`.
+`COMPRESS_BUDGET_CHARS` vaut donc **3 688**, pas 4 000. C'est une différence de 8 % qui aurait
+silencieusement desserré le budget de toutes les lignes mesurées ensuite.
+
+### Une correction de méthode : ce que `recall@k` mesure vraiment
+
+Les deux lignes d'encadrement n'ont pas donné les chiffres attendus, et **c'est le plan qui avait
+tort**. Le contrôle pré-enregistré était 0,785, repris de `dense-d30-ceiling`. Mesuré ici :
+0,721. Un écart de 0,064, soit six fois le seuil d'arrêt que le plan s'était lui-même fixé.
+
+La cause n'est pas le retrieval. Les cinq chunks du haut sont **identiques à l'octet** que la
+requête demande une limite de 5 ou de 30, sur les 38 questions — vérifié avant toute hypothèse.
+La cause est dans `app/evaluation/benchmark.py` : `dedupe_to_documents` s'applique à la liste de
+chunks **entière**, et le découpage `[:k]` vient après. Donc `recall@k` n'est pas « le rappel des
+k premiers chunks » mais **le rappel des k premiers documents distincts**, et la profondeur de
+vivier que ces k documents atteignent est fonction de `--top-k`. À `--top-k 30`, les 5 premiers
+documents distincts sont pêchés dans 30 chunks — pas dans les 5 qui arrivent réellement au
+modèle.
+
+Le contrôle correct est donc `compress-off-k5` = **0,721**, et le plafond qu'un vivier d20 peut
+contenir est **0,836**, pas 0,884 (qui demandait 30 chunks). L'écart disponible est **0,115**.
+
+Cette forme de métrique vaut pour **toutes** les lignes publiées depuis l'étape 12. Elle n'est
+pas corrigée : la changer maintenant invaliderait chaque ligne de `results.jsonl`, et les lignes
+restent comparables **entre elles** tant qu'on ne compare pas deux `--top-k` différents. Elle est
+documentée ici pour que personne ne recommence la comparaison qui a failli passer inaperçue.
+
+### La règle de décision, écrite avant le premier run
+
+Ré-enregistrée **avant qu'un seul bras de compression n'ait tourné**, sur l'arithmétique du plan
+lui-même (+0,05 sur le contrôle) plutôt que sur son chiffre absolu — le 0,835 écrit dans le plan
+tombe à 0,001 du plafond d20 et exigerait un compresseur qui ne perd rien :
+
+`COMPRESS_METHOD` passe de vide au gagnant **si et seulement si** les trois clauses tiennent :
+(1) Recall@context ≥ **0,771**, soit +0,050 sur le contrôle 0,721 ; (2) aucune catégorie ne
+régresse de plus de 0,05 en Recall@context contre `code` 0,800, `conceptual` 0,733, `exact`
+0,767, `multi_doc` 0,552, **`code` vérifiée explicitement** ; (3) le taux de refus sur les 38
+questions répondables ne dépasse pas celui de la baseline, **0,316**.
+
+**Recall@context est `recall@k` pour n'importe quel `k` au moins aussi grand que le contexte le
+plus long.** `recall_at_k` découpe `retrieved[:k]` : un `k` plus grand que la liste, c'est la
+liste entière. Aucune ligne de `metrics.py` n'a été touchée. **`precision@K` n'a aucun sens sur
+ces lignes** et n'est citée nulle part : son dénominateur reste `k` même quand moins de résultats
+reviennent, ce qui pénalise un compresseur pour avoir compressé.
+
+### Les six lignes mesurées
+
+| Run | Compression | Vivier | Budget | Recall@context | p50 |
+|---|---|---:|---:|---:|---:|
+| `compress-off-k5` (contrôle) | — | 5 | — | **0,721** | 49 ms |
+| `compress-embedding-k5` | `embedding` | 5 | 3 688 | 0,721 | 70 ms |
+| `compress-embedding-d10` | `embedding` | 10 | 3 688 | 0,759 | 88 ms |
+| **`compress-embedding-d20`** | `embedding` | 20 | 3 688 | **0,814** | 128 ms |
+| `compress-embedding-d20-b1.5x` | `embedding` | 20 | 5 532 | 0,827 | 104 ms |
+| `compress-off-d20` (plafond) | — | 20 | — | **0,836** | 49 ms |
+
+La première ligne mesurée est `compress-embedding-k5`, et elle l'a été **avant** la ligne phare,
+parce qu'elle sépare les deux choses que la ligne phare change d'un coup. C'est le brief littéral
+d'`information.md` : même vivier, phrases élaguées. Elle rapporte **exactement le contrôle**,
+0,721. L'extraction ne détruit donc rien au niveau document — tout le gain de la ligne phare
+vient de l'élargissement du vivier, pas de l'élagage, et l'élagage est ce qui le rend payable.
+
+### Le verdict : les trois clauses passent
+
+| Clause | Seuil | `compress-embedding-d20` | Verdict |
+|---|---|---:|---|
+| 1 — Recall@context | ≥ 0,771 | **0,814** | **passe** |
+| 2 — aucune catégorie sacrifiée | > −0,050 | **+0,000** (`code`, la pire) | **passe** |
+| 3 — taux de refus | ≤ 0,316 | **0,211** | **passe** |
+
+**Première fois en cinq étapes qu'une règle pré-enregistrée est atteinte.** `COMPRESS_METHOD`
+passe à `embedding` et `COMPRESS_CANDIDATES` à 20.
+
+Aucune catégorie ne régresse, et celle qui portait l'écart est celle qui bouge le plus :
+
+| Catégorie | Contrôle | `d20` | Écart |
+|---|---:|---:|---:|
+| `code` | 0,800 | 0,800 | +0,000 |
+| `conceptual` | 0,733 | 0,767 | +0,033 |
+| `exact` | 0,767 | 0,892 | +0,125 |
+| **`multi_doc`** | 0,552 | **0,792** | **+0,240** |
+
+`compress-embedding-d20-b1.5x` passe aussi les trois clauses (refus 0,184). Elle **n'est pas
+promue** : le départage du plan fixe `COMPRESS_METHOD` et `COMPRESS_CANDIDATES`, sur lesquels les
+deux lignes sont d'accord, et elles ne diffèrent que par le budget — qui n'est pas un paramètre
+balayé mais la constante mesurée à la première section. Elle coûte **1 698 tokens de prompt
+contre 1 094**, soit +55 %, ce qui est précisément ce que l'étape s'interdisait de dépenser. Elle
+est publiée pour ce qu'elle dit : il reste 0,022 de rappel dans le vivier, et c'est le **budget**
+qui le retient désormais, plus le compresseur.
+
+### Les bras de refus
+
+| Run | Refus | Contexte p50 | `prompt_tokens` p50 | p50 |
+|---|---:|---:|---:|---:|
+| `answers-k5-baseline` | 0,316 | 4 000 | 1 094 | 1 340 ms |
+| `answers-compress-k5` | 0,342 | 3 890 | 1 034 | 1 261 ms |
+| **`answers-compress-d20`** | **0,211** | 4 521 | 1 211 | 1 340 ms |
+| `answers-compress-d20-b1.5x` | 0,184 | 6 536 | 1 698 | 1 453 ms |
+| `answers-unanswerable-baseline` | **1,000** | 4 311 | 1 135 | 813 ms |
+| `answers-unanswerable-d20` | **1,000** | 4 696 | 1 294 | 852 ms |
+
+Le taux de refus est un signal binaire grossier, et c'est exactement sa valeur ici : il n'a
+aucune surface de réglage, donc il ne peut pas être ajusté jusqu'à l'accord. RAGAS jugera une
+réponse correctement à l'étape 21.
+
+Les deux lignes `--unanswerable` sont **reportées, pas arbitrées**. Elles abstiennent 7 sur 7 des
+deux côtés : un vivier compressé plus large n'a donné au modèle aucun matériau plausible
+supplémentaire pour répondre à ce qu'il ne peut pas savoir. C'est la direction rassurante, et
+c'est l'étape 22 qui en hérite.
+
+### Ce que les chiffres disent, y compris ce qu'on n'attendait pas
+
+**Le brief littéral perd.** `answers-compress-k5` — même vivier, phrases élaguées, 5 % de tokens
+économisés — fait *monter* le refus de 0,316 à **0,342**. Compresser sans élargir retire du texte
+sans rien apporter en échange. La réduction de tokens pour elle-même était bien la mauvaise
+lecture de la phase, et la ligne qui le prouve a été lancée en premier exprès.
+
+**Le prompt compressé est plus gros, pas plus petit.** 4 521 caractères contre 4 000, 1 211
+tokens contre 1 094 : +11 %. Le budget porte sur le texte de chunk, mais un vivier d20 qui
+survit à 13-16 chunks traîne 13-16 en-têtes `[n] source — titre` que `build_context()` ajoute
+**après** le budget. Le budget tient la médiane du texte, pas la médiane du prompt. L'étape
+achète donc 0,093 de Recall@context pour 11 % de tokens — un bon marché, mais pas le marché
+« à coût nul » que le plan annonçait, et les deux chiffres sont sur la même ligne pour qu'on
+puisse le voir.
+
+**Le budget est une constante, pas un ratio.** Sur une question dont le contexte k=5 est en
+dessous de la médiane, la compression *agrandit* le prompt jusqu'au budget. Vu à la volée sur
+« How do I declare a dependency in FastAPI ? » : 2 771 caractères sans compression, 4 776 avec.
+Un budget proportionnel au contexte non compressé de chaque question serait l'amélioration
+évidente, et elle n'est pas faite ici parce qu'elle n'a pas été mesurée.
+
+**La latence reste négligeable et le cache explique pourquoi.** 128 ms p50 pour le vivier d20
+contre 49 ms, soit +79 ms pour noter environ 200 phrases — parce que ces phrases sont des chunks
+déjà vectorisés au moment de l'indexation, et qu'elles sortent du cache sqlite. À comparer aux
+1 141 ms que le reranker de l'étape 17 facturait pour +0,002.
+
+**`code` ne régresse pas au niveau document et régresse quand même au niveau réponse.** C'est le
+constat qui vaut l'étape entière, et il est développé sous les transcriptions.
+
+### Les trois transcriptions
+
+Trois questions, choisies **avant** d'avoir lu les sorties : une `multi_doc` (la catégorie qui
+porte l'écart), une `code` (où la règle des blocs clôturés est en procès), et une que le
+compresseur a rendue **pire**. La troisième n'a pas été trouvée en lisant des transcriptions
+jusqu'à en voir une mauvaise : elle sort d'un diff des refus question par question entre
+`answers-k5-baseline` et `answers-compress-d20`. Deux des 38 régressent, `q018` et `q033`.
+
+| | `q035` `multi_doc` | `q022` `code` | `q018` `code` |
+|---|---|---|---|
+| Sans compression | refus, 0 cité | refus, 0 cité | **réponse, 2 cités** |
+| Compressé d20 | **réponse, 3 cités** | **réponse, 1 cité** | refus, 0 cité |
+| Contexte | 2 792 → 4 606 car. | 3 424 → 4 346 car. | 3 379 → 4 267 car. |
+| Blocs de code dans le contexte | 0 → 0 | 8 → 4 | **6 → 0** |
+
+Transcriptions verbatim : [`docs/superpowers/plans/transcripts-step-20.md`](docs/superpowers/plans/transcripts-step-20.md).
+
+**`q018` est le constat que les métriques de retrieval auraient manqué.** *« How do I write a
+test that calls my own endpoints ? »* Son Recall@context ne bouge pas d'un millième : `code` vaut
+0,800 dans le contrôle comme dans le bras d20, parce que les bons **documents** sont dans le
+contexte des deux côtés. La réponse régresse quand même, et la transcription dit pourquoi en un
+chiffre : le contexte non compressé porte trois blocs de code, le compressé n'en porte **aucun**.
+
+La règle des blocs clôturés fonctionne exactement comme prévu — un bloc est une unité, gardée
+entière ou jetée entière, parce qu'un demi-bloc est du code cassé et non du code plus court. Mais
+le budget est glouton **au caractère**, donc un exemple `TestClient` de 900 caractères concourt
+contre des phrases de prose qui coûtent chacune un vingtième et notent presque aussi bien. La
+prose gagne à tous les coups. Sur une question dont la réponse *est* l'exemple, le modèle reçoit
+un contexte qui décrit le test sans jamais le montrer, et refuse — correctement.
+
+C'est l'écart entre Recall@context et qualité de réponse, visible sur une seule question. C'est
+ce que l'étape 21 existe pour mesurer proprement, et c'est un argument pour noter une unité à la
+**pertinence par caractère** plutôt qu'à la pertinence seule.
+
+### Écarté volontairement
+
+| Écarté | À ajouter quand |
+|---|---|
+| Un tokeniseur (`tiktoken`) | jamais pour cette étape : la prédiction de `context.py` est mesurée et retirée, l'écart vaut 0,0001 $ par question et le chiffre publié est `usage.prompt_tokens` |
+| Une dépendance quelconque | jamais ici : la deuxième étape d'affilée à ne rien ajouter à `pyproject.toml` — `embed_texts()` et son cache suffisaient |
+| LLMLingua ou un compresseur à modèle | quand une entrée de `COMPRESSORS` qui note autrement vaudra son appel — le registre rend l'ajout d'une fonction, pas d'un remaniement |
+| Notation à la pertinence **par caractère** | étape 21, quand la qualité de réponse sera mesurée proprement : `q018` dit que c'est le bon levier, un seul cas ne dit pas de quelle taille |
+| Budget proportionnel au contexte de chaque question | même raison : l'idée est identifiée par une observation à la volée, pas par une mesure |
+| Compter les en-têtes dans le budget | jamais tel quel : ils sont ajoutés par `build_context()`, qui s'engage à ne faire ni I/O ni modèle ; le prompt réel est reporté à côté, ce qui suffit à le voir |
+| Un compresseur qui réordonne aussi | jamais : les étapes 16, 17 et 19 ont dépensé tout le budget de classement du projet, et confondre les deux dans un seul chiffre serait perdre les deux |
+| `scripts/search.py` | jamais : il imprime des chunks classés, la compression ne change pas le classement, et une liste tronquée des mêmes documents dans le même ordre n'apprend rien |
+| Promouvoir `d20-b1.5x` | jamais sans re-mesurer le budget : elle gagne 0,013 de rappel pour +55 % de tokens, ce que cette étape s'interdisait |
+| Modifier `data/eval/questions.jsonl` | jamais : le jeu est figé depuis l'étape 10 |
 
 ## Premiers constats
 

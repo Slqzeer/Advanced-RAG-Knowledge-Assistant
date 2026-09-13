@@ -68,9 +68,11 @@ class Settings(BaseSettings):
     # prompt that grows until it breaks, and the turn that disambiguates a
     # follow-up is almost always the previous one.
     history_turns: int = 4
-    # Step 20. Empty means off: unchanged behaviour until a measurement earns
-    # the change. embedding — measured at step 20, table in the README.
-    compress_method: str = ""
+    # Step 20 measured it and the pre-registered rule was met, all three
+    # clauses: Recall@context 0.814 against a 0.771 bar and a 0.721 control, no
+    # per-category regression, and refusal on the 38 answerable questions down
+    # from 0.316 to 0.211. embedding — table in the README.
+    compress_method: str = "embedding"
     # How deep the retrieved pool goes into the compressor. Step 17 measured
     # Recall@20 == Recall@30 in every pool, so 30 is 50 % more sentence
     # embedding for nothing reachable.

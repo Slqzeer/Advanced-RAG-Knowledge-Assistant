@@ -146,16 +146,31 @@ def test_a_refusal_with_context_available_is_not_flagged() -> None:
 
 
 def test_the_retriever_gets_top_k_and_the_filters() -> None:
+    # compress="" pins the pool to top_k: since step 20 the default compressor
+    # widens it to COMPRESS_CANDIDATES, which is a different test's subject.
     retriever = FakeRetriever()
-    ask(retriever=retriever, top_k=7, filters={"doc_type": "tutorial"})
+    ask(retriever=retriever, compress="", top_k=7, filters={"doc_type": "tutorial"})
     assert retriever.calls[0]["top_k"] == 7
     assert retriever.calls[0]["filters"] == {"doc_type": "tutorial"}
 
 
 def test_top_k_falls_back_to_the_settings() -> None:
     retriever = FakeRetriever()
-    ask(retriever=retriever)
+    ask(retriever=retriever, compress="")
     assert retriever.calls[0]["top_k"] == SETTINGS.top_k
+
+
+def test_the_default_compressor_is_on_and_widens_the_pool() -> None:
+    """Step 20 flipped COMPRESS_METHOD; a default nobody asserts is a default
+    that gets reverted by the next refactor without a test going red."""
+    settings = Settings(_env_file=None, generation_model="test-model", top_k=3)
+    assert settings.compress_method == "embedding"
+
+    retriever = FakeRetriever()
+    # Budget above the input, so compress() short-circuits before any embedder:
+    # the subject here is the widened depth, not the scoring.
+    ask(retriever=retriever, settings=settings, compress_budget=10_000)
+    assert retriever.calls[0]["top_k"] == settings.compress_candidates == 20
 
 
 def test_latency_is_measured_and_positive() -> None:
