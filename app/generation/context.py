@@ -13,8 +13,11 @@ from app.models.chunks import ScoredChunk
 
 # ~3 000 tokens for top_k=5. Characters, not tokens: a tokeniser is a dependency
 # and a per-model one at that.
-# ponytail: step 20 replaces this with a real token budget when compression
-# arrives and the difference starts costing money.
+# Step 20 measured the prediction above and retired it: the difference is worth
+# about $0.0001 a question, so a per-model tokeniser was never the cost it was
+# predicted to be. This stays the prompt's hard outer ceiling; the compressor's
+# own budget (COMPRESS_BUDGET_CHARS) is the one that binds, and the number
+# reported is usage.prompt_tokens off the API response, not an estimate.
 MAX_CONTEXT_CHARS = 12_000
 SEPARATOR = "\n\n"
 
