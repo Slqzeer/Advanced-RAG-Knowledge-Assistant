@@ -8,8 +8,9 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-17 are done — `v0.7` is tagged. Step 18 (query rewriting) is
-next, and step 17 tells it not to expect a generic model to fix ranking.**
+**Phase 0 and steps 02-19 are done — `v0.9` is tagged. Step 20 (contextual
+compression) is next, and steps 18-19 tell it the pool, not the ranking, is what
+limits this corpus.**
 
 Shipped and verified:
 
@@ -35,6 +36,8 @@ Shipped and verified:
 | BM25 index | `app/retrieval/bm25.py` — hand-rolled Okapi BM25 with Lucene's IDF variant, built by scrolling the same collection dense search queries, 1 484 chunks, avg length 126 tokens, ~200 ms build / 2 ms per query, 20 tests, no new dependency |
 | Hybrid retrieval | `app/retrieval/search.py` — `RETRIEVERS` keyed `dense`\|`lexical`\|`hybrid`, `rrf()` on ranks only, `matches_filters` giving the lexical branch filter parity; six measured runs. Best fusion row `hybrid-k60-d20`: Recall@5 **0.737** (against 0.776 dense) but Recall@10 **0.829** (against 0.785). The pre-registered rule was not met, so `dense` stays the default |
 | Cross-encoder reranking | `app/retrieval/rerank.py` — `RERANKERS` keyed `flashrank`\|`cohere`, a backend returning only `(index, score)` pairs while `rerank()` owns ordering, tie-breaking and the `score`/`rerank_score` split; `search(rerank=)` orthogonal to `mode`, reachable from all three scripts and `answer_question()`. The ceiling was measured first: the dense d30 pool holds **0.884** Recall@30 against 0.785 at rank 5. Eight measured rows. Best row `rerank-flashrank-dense-d30`: Recall@5 **0.779** (+0.002 on the 0.776 baseline), capture **−0.067**, p50 **1 141 ms** against a 400 ms budget, `code` **−0.100**. All three clauses of the pre-registered rule fail, so `RERANK_MODEL` stays empty. The Cohere rows are unmeasured — no API key |
+| Query transforms | `app/retrieval/transform.py` — `TRANSFORMS` keyed `rewrite`\|`multi`, with parsing, capping, de-duplication and the fallback to the original query owned once for both; `search(transform=)` orthogonal to `mode` and `rerank`, fanning N queries through the chosen retriever and fusing with the existing `rrf()`; `contextualize()` deliberately outside the registry and above `search()`, in `answer_question(history=)`. Reachable from all three scripts. No new dependency — the first step since 13 to add none. Six measured rows. Best row `multi-n2-dense`: Recall@5 **0.765** against the 0.776 baseline (**−0.011**), but Recall@10 **0.807** (+0.022) and MRR **0.867** (+0.057, the project's best). `rewrite-standalone` loses outright at **0.684**, with `exact` **−0.183**. Clause 1 of the pre-registered rule fails (clauses 2 and 3 pass), so `QUERY_TRANSFORM` stays empty |
+| Conversational fixture | `data/eval/conversations.jsonl`, `scripts/benchmark_conversations.py`, `app/evaluation/dataset.py` — `EvalConversation` subclasses `EvalQuestion` so it inherits every validator of the frozen set, and `load_dataset(model=)` avoids a second loader. Ten referential follow-ups built to one rule: the ground truth must be unreachable from the follow-up alone. Two rows: `conv-raw` Recall@5 **0.100** against `conv-rewrite` **0.600** (**+0.500**), MRR 0.127 → 0.567. The frozen 50-question set does not change |
 | Metadata filtering | `app/ingestion/loader.py`, `app/retrieval/search.py` — `doc_type` derived from the corpus layout, indexed, filterable through a generic `filters=` mapping; per-facet recall and an oracle run recording the ceiling on facet routing at **+0.000 Recall@5** |
 
 The loop is closed, verified and measured: a question goes in, a grounded answer with resolved citations comes out of `scripts/ask.py`, and 38 answerable questions give it a score. No HTTP endpoint yet — that is step 25.
@@ -42,9 +45,10 @@ The loop is closed, verified and measured: a question goes in, a grounded answer
 Four things later steps own:
 
 - **`HTTPException 422` is resolved as a finding, not as a fix.** Steps 14-16 gave the retriever the missing capability — BM25's rank-1 hit for `HTTPException 422` does contain the literal token, and `--mode hybrid` surfaces `reference/exceptions` at rank 2 — and the answer is still an honest "I do not know". The four chunks in the corpus containing `422` are two release notes and an OpenAPI JSON example; none of them explains what the code means. The refusal is correct. No later step owns this: the target was chosen at step 07, before step 11 said where the gap actually was, and `exact` was already the strongest category at 0.892.
-- **The headroom is real and a generic cross-encoder does not capture it.** Step 17 consumed step 16's `Recall@10 − Recall@5 = 0.092` precondition and replaced it with measurement. The pools do hold the documents: dense d30 goes 0.785 → **0.884** at Recall@30 (headroom 0.099), hybrid d30 0.768 → 0.890 (0.123), hybrid d50 0.743 → **0.917** (0.173). FlashRank recovers none of it — best capture **+0.018**, best absolute Recall@5 **0.779** against a 0.806 bar, for 1 141 ms. Two further facts steps 18-19 should carry: **Recall@20 equals Recall@30 in every pool**, so depth 20 is where these pools stop finding anything new and a 30-deep pool is 50 % more cross-encoder work for nothing reachable; and the reranker **moves precision between categories rather than adding any** — `conceptual` +0.083, `code` −0.100, total +0.002 — because `ms-marco-MiniLM-L-12-v2` is trained on natural-language web passages and promotes prose over code-bearing chunks. **The input for steps 18-19: the gap is not a ranking problem a generic model solves. Do not reach for a bigger reranker; a domain-adapted or code-aware model is the only version of this worth retrying.**
+- **The headroom is real and a generic cross-encoder does not capture it.** Step 17 consumed step 16's `Recall@10 − Recall@5 = 0.092` precondition and replaced it with measurement. The pools do hold the documents: dense d30 goes 0.785 → **0.884** at Recall@30 (headroom 0.099), hybrid d30 0.768 → 0.890 (0.123), hybrid d50 0.743 → **0.917** (0.173). FlashRank recovers none of it — best capture **+0.018**, best absolute Recall@5 **0.779** against a 0.806 bar, for 1 141 ms. Two further facts steps 18-19 should carry: **Recall@20 equals Recall@30 in every pool**, so depth 20 is where these pools stop finding anything new and a 30-deep pool is 50 % more cross-encoder work for nothing reachable; and the reranker **moves precision between categories rather than adding any** — `conceptual` +0.083, `code` −0.100, total +0.002 — because `ms-marco-MiniLM-L-12-v2` is trained on natural-language web passages and promotes prose over code-bearing chunks. **Steps 18-19 consumed this and answered it: the gap is not a ranking problem at all.** Multi-query expansion — a different pool, built from up to five paraphrases rather than one query — gains **+0.057 MRR and +0.022 Recall@10 while losing 0.011 Recall@5**. It reorders what the pool already held and adds nothing new to it, which is the same shape as the reranker's result arrived at from the opposite direction. And reranking a wider multi-query pool costs `code` **−0.100 again**, so the category regression was never the pool's composition: `ms-marco-MiniLM-L-12-v2` buries code-bearing chunks however they are presented. A domain-adapted or code-aware reranker remains the only version worth retrying, and step 20 should assume the *retrieval* side is close to what this corpus and this embedding model can give.
 - **Generation is ~95 % of the latency.** 1.5-3.7 s per question against ~35 ms of warm retrieval. Any latency work before step 23's cache would be optimising the wrong 5 %.
 - **A score threshold cannot carry refusal.** The 7 out-of-corpus questions score 0.305-0.459, the answerable ones 0.341-0.664. Step 22 needs something other than a floor.
+- **A score threshold cannot even be shared across runs.** Every multi-query row reports `abstention_rate` **1.000** against a 0.143 baseline, and that is an artefact, not a finding: RRF replaces every cosine with `1/(k+rank)` around 0.03, so all 45 questions fall under the 0.35 floor, answerable ones included. `rrf()`'s own docstring already said this; steps 18-19 are where it bites a recorded number. The one transform row that keeps cosines is `rewrite-standalone`, which skips fusion on its single query, and there abstention moves 0.143 → **0.286** for real — a rewritten query scores lower against everything, the threshold included. Step 22 inherits both the real number and the fact that any refusal rule must be defined per scoring scheme, not per project.
 - **Facet routing has a ceiling of zero.** Step 13's oracle — every question filtered to its own ground-truth `doc_type` — moves Recall@5 by +0.000 and Recall@10 by +0.000; the whole aggregate delta (MRR +0.046) is four questions reordered. Only 16 of 38 answerable questions even have single-facet ground truth, and on the other 22 any single-facet filter drops a relevant document by construction. This is the input step 18 needs: do not build a query-side facet router for this corpus.
 
 ## The three rules
@@ -67,7 +71,7 @@ Four things later steps own:
 | 13 | Phase 3 — Metadata | `v0.4+` | A derived `doc_type` facet, a generic `filters=` mapping, per-facet recall. **Done — the routing ceiling is +0.000 Recall@5.** |
 | 14-16 | Phase 5-6 — Hybrid + RRF | `v0.5`-`v0.6` | Dense + BM25 fused. **Done — hybrid loses Recall@5 (0.737 vs 0.776) and wins Recall@10 (0.829 vs 0.785); `dense` stays the default, and the Recall@10−Recall@5 gap opens from 0.009 to 0.092.** |
 | 17 | Phase 6 — Reranking | `v0.7` | Top-30 recall, top-5 precision, measured latency cost. **Done — the pool holds 0.884 Recall@30 against 0.785 at rank 5, and FlashRank captures none of it: Recall@5 0.779 (+0.002), p50 1 141 ms, `code` −0.100; `RERANK_MODEL` stays empty.** |
-| 18-19 | Phase 7-8 — Query transforms | `v0.8`-`v0.9` | "et pour docker ?" resolves against conversation history. |
+| 18-19 | Phase 7-8 — Query transforms | `v0.8`-`v0.9` | "et pour docker ?" resolves against conversation history. **Done — resolution works and is the step's one clear win (Recall@5 0.100 → 0.600 on a ten-conversation fixture), but neither `rewrite` (0.684) nor `multi` (best 0.765) beats the 0.776 baseline; `QUERY_TRANSFORM` stays empty.** |
 | 20 | Phase 9 — Compression | `v1.2` | Same answer quality, fewer context tokens. |
 | 21 | Phase 11 — RAGAS | `v1.3` | Faithfulness and answer relevance, not just retrieval. |
 | 22 | Phase 12 — Guardrails | `v1.6` | Refuses when retrieval is weak; survives injected instructions in documents. |
@@ -79,7 +83,7 @@ Four things later steps own:
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-17:
+Detailed, executable plans exist for steps 02-19:
 
 | Step | Plan |
 |---|---|
@@ -97,8 +101,9 @@ Detailed, executable plans exist for steps 02-17:
 | 13 Metadata filtering | [`2026-09-12-step-13-metadata.md`](superpowers/plans/2026-09-12-step-13-metadata.md) |
 | 14-16 Hybrid search and RRF | [`2026-09-13-step-14-16-hybrid-rrf.md`](superpowers/plans/2026-09-13-step-14-16-hybrid-rrf.md), design: [`2026-09-13-hybrid-rrf-design.md`](superpowers/specs/2026-09-13-hybrid-rrf-design.md) |
 | 17 Cross-encoder reranking | [`2026-09-13-step-17-reranking.md`](superpowers/plans/2026-09-13-step-17-reranking.md), design: [`2026-09-13-reranking-design.md`](superpowers/specs/2026-09-13-reranking-design.md) |
+| 18-19 Query transforms | [`2026-09-13-step-18-19-query-transforms.md`](superpowers/plans/2026-09-13-step-18-19-query-transforms.md), design: [`2026-09-13-query-transforms-design.md`](superpowers/specs/2026-09-13-query-transforms-design.md) |
 
-**Steps 17-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: which chunking strategy wins, whether BM25 helps this corpus, whether reranking pays for its latency, whether multi-query is worth 4x the cost. Writing those plans now would mean inventing the answers. Each plan gets written at the start of its own step, with step 11's numbers in hand.
+**Steps 20-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: how much context compression can drop before faithfulness moves, whether a score floor can carry refusal at all, what a cache key has to include. Writing those plans now would mean inventing the answers — steps 12-19 each answered their own question only by running it, and four of them answered 'no'. Each plan gets written at the start of its own step, with step 11's numbers in hand.
 
 ## How a step lands
 
@@ -129,6 +134,7 @@ app/
 ├── retrieval/search.py       # 07  query -> scored chunks
 ├── retrieval/bm25.py         # 14  hand-rolled Okapi BM25 index
 ├── retrieval/rerank.py       # 17  cross-encoder rescoring of a shortlist
+├── retrieval/transform.py    # 18-19  query rewriting and expansion
 ├── generation/context.py     # 08  chunks -> numbered context block
 ├── generation/llm.py          # 08  single LLM call
 ├── generation/answer.py      # 08  retrieve -> context -> prompt -> Answer
@@ -141,7 +147,8 @@ scripts/
 ├── fetch_corpus.py           # 02
 ├── index_corpus.py           # 06
 ├── ask.py                    # 08
-└── benchmark.py              # 11
+├── benchmark.py              # 11
+└── benchmark_conversations.py # 18  the conv-raw / conv-rewrite delta
 ```
 
 `api/` is last on purpose. A CLI proves the pipeline works; HTTP is packaging.

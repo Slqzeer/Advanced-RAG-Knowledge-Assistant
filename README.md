@@ -18,6 +18,7 @@
 - [Filtrage par métadonnées — le plafond du routage par facette](#filtrage-par-métadonnées--le-plafond-du-routage-par-facette)
 - [Recherche hybride — BM25, RRF et une règle non atteinte](#recherche-hybride--bm25-rrf-et-une-règle-non-atteinte)
 - [Reranking par cross-encoder — le plafond mesuré, puis la règle non atteinte](#reranking-par-cross-encoder--le-plafond-mesuré-puis-la-règle-non-atteinte)
+- [Transformations de requête — réécriture, conversation et expansion](#transformations-de-requête--réécriture-conversation-et-expansion)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -37,7 +38,7 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 17 terminée — Reranking par cross-encoder, mesuré et non promu.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étapes 18-19 terminées — Transformations de requête, mesurées et non promues.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
 Fonctionnalités disponibles :
 
@@ -59,6 +60,8 @@ Fonctionnalités disponibles :
 - recherche lexicale via `app.retrieval.bm25` : index inversé Okapi BM25 écrit à la main (IDF à la Lucene, `k1=1.5`, `b=0.75`), construit en scrollant la collection que la recherche dense interroge déjà, 1 484 chunks, longueur moyenne 126 tokens, ~200 ms de construction et 2 ms par requête, aucune dépendance ajoutée ;
 - fusion des deux retrievers via `app.retrieval.search` : registre `RETRIEVERS` (`dense` | `lexical` | `hybrid`), `rrf()` qui ne consomme que des rangs et jamais les scores, filtres de payload honorés des deux côtés par `matches_filters`, `--mode` sur `search.py`, `ask.py` et `benchmark.py` ;
 - reranking par cross-encoder via `app.retrieval.rerank` : registre `RERANKERS` (`flashrank` | `cohere`) où un backend ne rend que des paires `(index, score)` et où `rerank()` fait seul le tri, les égalités et la reconstruction des `ScoredChunk` ; `search(rerank=)` orthogonal à `mode`, `--rerank` et `--rerank-candidates` sur les trois scripts, `score` du retriever conservé à côté du nouveau `rerank_score` ; `ms-marco-MiniLM-L-12-v2` en ONNX, ~34 Mo téléchargés une fois, ~1 100 ms pour 30 candidats ;
+- transformations de requête via `app.retrieval.transform` : registre `TRANSFORMS` (`rewrite` | `multi`) où l'analyse ligne à ligne, le plafonnement, la déduplication et le repli sur la requête originale sont possédés une seule fois pour les deux entrées ; `search(transform=)` orthogonal à `mode` et `rerank`, qui lance le retriever une fois par requête produite et fusionne les classements avec le `rrf()` de l'étape 16 ; `contextualize()` volontairement hors du registre, appelée depuis `answer_question(history=)` ; `--transform`, `--transform-n` sur les trois scripts et `--history` sur `ask.py` ; aucune dépendance ajoutée ;
+- fixture conversationnelle via `data/eval/conversations.jsonl` et `scripts/benchmark_conversations.py` : dix suivis référentiels annotés au niveau document, `EvalConversation` qui hérite de tous les validateurs du jeu figé, et deux lignes `conv-raw` / `conv-rewrite` dont l'écart est le chiffre que l'étape 18 existe pour produire ;
 - métriques et banc d'essai via `app.evaluation.metrics`, `app.evaluation.benchmark` et `scripts/benchmark.py` : Recall@K, Precision@K, MRR, Hit Rate@K et NDCG@K sur des documents dédupliqués, ventilation par catégorie, latence p50/p95, historique versionné dans `data/eval/results.jsonl` avec le commit git de chaque run.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
@@ -1063,6 +1066,165 @@ changé cette réponse, ce serait un constat **sur le reranker**, pas une correc
 | Un `rerank_score` dans l'historique par question | jamais : `score` reste le nombre du retriever et `rerank_score` porte le nouveau, et c'est `rerank_score is not None` qui dit lequel a produit le classement |
 | Sixième profondeur de vivier | jamais après avoir vu les cinq premières, pour la raison exacte de l'étape 16 : élargir un balayage pour trouver une ligne favorable est l'abandon silencieux d'une règle pré-enregistrée |
 
+## Transformations de requête — réécriture, conversation et expansion
+
+L'étape 17 a fermé l'autre porte : un cross-encoder **réordonne** un vivier et reste plafonné
+par le rappel de ce vivier, qui sature dès la profondeur 20 sur ce corpus. Une transformation
+change la **requête**, donc elle peut ramener un document qu'aucun vivier n'a jamais contenu.
+C'est le dernier levier disponible, et ces deux étapes le mesurent sous trois formes :
+réécrire la question (`rewrite`), la résoudre contre une conversation (`contextualize`), ou
+l'éclater en plusieurs formulations dont les classements sont fusionnés (`multi`).
+
+Une seule architecture pour les trois, et une asymétrie assumée : `rewrite` et `multi` sont
+des clés du registre `TRANSFORMS` et vivent **dans** `search()` ; `contextualize()` vit
+**au-dessus**, dans `answer_question()`. Elle prend une conversation et rend une chaîne, donc
+elle n'entre pas dans un contrat `str -> list[str]` — et surtout un `search()` qui saurait ce
+qu'est une conversation pousserait cette dépendance dans la clé de cache de l'étape 23 et dans
+l'endpoint de l'étape 25.
+
+### La règle de décision, écrite avant le premier run
+
+`QUERY_TRANSFORM` passe de vide au gagnant **si et seulement si** les trois clauses tiennent :
+(1) Recall@5 ≥ **0,806**, soit +0,030 sur la baseline 0,776 ; (2) aucune catégorie ne régresse
+de plus de 0,05 en Recall@5 contre `exact` 0,892, `code` 0,850, `conceptual` 0,733,
+`multi_doc` 0,594 ; (3) latence p50 de retrieval, appel de transformation compris, < 2 000 ms.
+
+### Les six lignes mesurées
+
+| Run | Transformation | Mode | Recall@5 | Recall@10 | MRR | p50 | dont transformation |
+|---|---|---|---:|---:|---:|---:|---:|
+| `dense-sentence-doctype` (baseline) | — | dense | **0,776** | 0,785 | 0,810 | **65 ms** | — |
+| `rewrite-standalone` | `rewrite` | dense | 0,684 | 0,704 | 0,697 | 897 ms | 630 ms |
+| `multi-n2-dense` | `multi` n=2 | dense | **0,765** | **0,807** | **0,867** | 1 119 ms | 802 ms |
+| `multi-n3-dense` | `multi` n=3 | dense | 0,750 | 0,779 | 0,785 | 1 248 ms | 782 ms |
+| `multi-n5-dense` | `multi` n=5 | dense | 0,765 | 0,794 | 0,798 | 1 723 ms | 968 ms |
+| `multi-n3-hybrid` | `multi` n=3 | hybrid | 0,700 | 0,774 | 0,798 | 874 ms | 760 ms |
+| `multi-n3-dense-rerank-flashrank` | `multi` n=3 | dense + FlashRank | 0,735 | 0,792 | 0,754 | 1 900 ms | 797 ms |
+
+La colonne « dont transformation » n'est pas obtenue par soustraction : chaque run enregistre
+la complétion **brute** du modèle, sa latence et ses tokens question par question dans
+`data/eval/results.jsonl`. C'est ce qui rend le repli de `expand()` sur la requête originale
+inspectable plutôt que silencieux — un hoquet d'API au milieu d'un run de 45 questions dégrade
+vers le comportement d'aujourd'hui au lieu de mettre une ligne à zéro, et l'historique le dit.
+
+### Le verdict : la clause 1 échoue, les deux autres passent
+
+Meilleure ligne `multi-n2-dense`, Recall@5 **0,765** contre **0,776**, soit **−0,011** là où la
+clause 1 demandait +0,030. Aucune ligne de la matrice ne dépasse la baseline.
+
+| Clause | Seuil | Valeur | Verdict |
+|---|---|---:|---|
+| 1 — gain absolu | ≥ +0,030 | **−0,011** | **échec** |
+| 2 — aucune catégorie sacrifiée | > −0,050 | −0,050 (`conceptual`) | passe |
+| 3 — latence p50 | < 2 000 ms | 1 119 ms | passe |
+
+**`QUERY_TRANSFORM` reste donc vide.** Les deux transformations, la fixture conversationnelle,
+les tests et les six lignes mesurées sont livrés quand même : `--transform multi` est disponible
+sur les trois scripts, mesuré et documenté ; il n'est simplement pas le défaut. La règle n'a pas
+été élargie pour faire passer un chiffre, et aucune quatrième transformation n'a été essayée
+pour éviter ce résultat.
+
+### Le seul gain net de l'étape : la conversation
+
+La question conversationnelle ne pouvait pas être notée sur le jeu figé de 50 questions, qui ne
+contient aucun historique. Elle a donc sa propre fixture, `data/eval/conversations.jsonl`, dix
+suivis référentiels bâtis sur **une seule règle** : la vérité terrain doit être inatteignable
+depuis le suivi seul.
+
+| Run | Recall@5 | Recall@10 | MRR | p50 |
+|---|---:|---:|---:|---:|
+| `conv-raw` — le suivi nu | 0,100 | 0,300 | 0,127 | **32 ms** |
+| `conv-rewrite` — résolu contre l'historique | **0,600** | **0,700** | **0,567** | 1 069 ms |
+
+**+0,500 de Recall@5**, et c'est le seul chiffre franc des deux étapes. Le premier jet de cette
+fixture ne valait rien et le dire est le plus utile de la section : `conv-raw` y marquait 0,700,
+parce que sept suivis sur dix portaient leur propre nom discriminant. « and how do I test
+that? » retrouve `tutorial/testing` sur le mot « test », sans aucun historique — l'écart ne
+mesurait alors rien du tout. La fixture a été reconstruite en déixis pure, le sujet dans
+l'historique et le suivi qui ne fait que pointer (« how do I set that up? », « how do I go about
+it? »), puis chaque suivi a été vérifié un par un contre l'index. `c001` est la seule ligne
+encore atteignable sans historique : c'est le « et pour docker ? » de la roadmap, gardé
+volontairement et étiqueté comme le cas faible qu'il est.
+
+### Les deux transcriptions, sans vérité terrain
+
+Preuve qualitative, attachée à aucune métrique, et positive pour la première fois depuis trois
+étapes. Le suivi est le même dans les deux appels ; seul `--history` change :
+
+```
+$ uv run python scripts/ask.py "and how do I test that?"
+I do not have enough information in the provided context to answer this.
+5 retrieved, 5 used, 0 dropped, 0 cited  |  gpt-4o-mini  |  928 tokens  |  2414 ms
+
+$ uv run python scripts/ask.py "and how do I test that?" \
+    --history "How do I override a dependency for one route?" \
+    --history "Use app.dependency_overrides with the dependency as the key [1]."
+To test your FastAPI application, you can follow these steps:
+1. Add `pytest` to your project [...] 4. Create a test file, such as `test_main.py` [1]
+[1] Testing / Testing: extended example  (0.3323)  https://fastapi.tiangolo.com/tutorial/testing/
+[2] Testing / Run it  (0.3476)  https://fastapi.tiangolo.com/tutorial/testing/
+5 retrieved, 5 used, 0 dropped, 2 cited  |  gpt-4o-mini  |  1197 tokens  |  3130 ms
+```
+
+Le « et pour docker ? » de la roadmap donne la même démonstration côté requête et un refus côté
+réponse : `contextualize()` produit bien « Comment limiter la mémoire d'un conteneur Docker ? »
+à partir de « et pour docker ? », mais la page `deployment/docker` du corpus ne parle pas de
+limites mémoire. Le refus est correct et c'est le corpus qui manque, pas la résolution.
+
+### Ce que les chiffres disent, y compris ce qu'on n'attendait pas
+
+**Réécrire une question, c'est effacer le token littéral dont elle vivait.** `rewrite` perd sur
+les quatre catégories sauf une, et la ventilation est sans ambiguïté : `exact` **−0,183**,
+`code` −0,100, `conceptual` −0,100, `multi_doc` **+0,042**. La question `q033` du jeu est
+littéralement `Depends` ; le réécriveur en fait `'Depends documentation'` et perd le symbole.
+`q003`, « How does an incoming URL end up in one of my functions? », devient `'incoming URL
+routing to functions'` et ne ramène plus rien. Étaler une question sur plus de vocabulaire est
+exactement ce que `multi_doc` veut et exactement ce qu'`exact` ne peut pas se permettre.
+
+**L'expansion réordonne le vivier sans l'élargir.** `multi-n2-dense` perd 0,011 de Recall@5 mais
+gagne **+0,022 de Recall@10** et **+0,057 de MRR** — le meilleur MRR du projet, 0,867 contre
+0,810. Traduction : les paraphrases ne font pas entrer de nouveaux documents pertinents dans le
+vivier, elles remontent ceux qui y étaient déjà. C'est le contraire de ce que l'expansion
+promet, et cela précise le constat de l'étape 17 : sous le rang 5, ce ne sont pas seulement les
+bons documents qui manquent au classement, c'est le vivier qui ne les contient pas.
+
+**Plus de paraphrases n'est pas mieux, et ce n'est même pas monotone.** 0,765 à n=2, 0,750 à
+n=3, 0,765 à n=5. Sur 38 questions ces écarts sont du bruit autant que du signal, et c'est le
+constat : aucun `n` ne produit un gain qui en sorte.
+
+**La ligne rerankée répond à la question ouverte de l'étape 17.** L'étape 17 avait trouvé
+`code` −0,100 sous FlashRank et accusé le modèle plutôt que le vivier. Reranker un vivier
+multi-query — plus large et composé autrement — coûte **`code` −0,100 à nouveau**. Le vivier
+n'était pas la cause ; `ms-marco-MiniLM-L-12-v2` enterre les chunks porteurs de code quelle que
+soit la manière dont on les lui présente.
+
+**Le taux d'abstention affiché par les lignes multi-query est un artefact, pas un constat.** Il
+vaut 1,000 partout contre 0,143 pour la baseline, et la cause est écrite depuis l'étape 16 dans
+la docstring de `rrf()` : la fusion remplace chaque cosinus par un `1/(k+rang)` d'environ 0,03,
+donc **toutes** les questions passent sous le seuil de 0,35, les répondables comprises. La seule
+ligne de transformation qui conserve des cosinus est `rewrite-standalone`, qui saute la fusion
+sur sa requête unique, et là l'abstention bouge pour de vrai : 0,143 → **0,286**. L'étape 22
+hérite des deux choses — le chiffre réel, et le fait qu'un seuil de score ne se partage pas
+entre des runs fusionnés et non fusionnés.
+
+**Le confondu de `rewrite-standalone`, dit en une phrase.** `REWRITE_SYSTEM` reformule **et**
+traduit vers l'anglais, donc un gain aurait eu deux causes possibles. Un run
+`rewrite-standalone-no-translate` était prévu pour les séparer ; il n'a pas été lancé, parce que
+la ligne perd et qu'il n'y a rien à attribuer.
+
+### Écarté volontairement
+
+| Écarté | À ajouter quand |
+|---|---|
+| Une dépendance quelconque | jamais pour cette étape : c'est la première depuis l'étape 13 à ne rien ajouter à `pyproject.toml`, et `complete()` suffisait |
+| Sortie structurée (`response_format`) pour les listes de requêtes | jamais ici : cela ajouterait un paramètre à `complete()`, seule fonction du projet qui parle à un modèle, et le repli de `expand()` est nécessaire de toute façon |
+| Un cache des sorties de transformation | étape 23, qui possède le cache — payer 800 ms deux fois pour la même question est un problème de cache, pas de transformation |
+| Un routeur qui ne transforme que certaines questions | jamais avant d'avoir mesuré la version inconditionnelle, ce que fait cette étape ; et elle perd, donc il n'y a rien à router |
+| Changer le seuil d'abstention au vu des lignes multi-query | étape 22, qui possède le refus — le chiffre est reporté ici, pas agi |
+| Chaîner deux transformations | jamais : une à la fois, par décision, comme `RETRIEVAL_MODE` et `RERANK_MODEL` |
+| `HyDE` (document hypothétique) | jamais dans cette étape : une quatrième transformation essayée après trois verdicts négatifs serait un élargissement de règle déguisé |
+| Modifier `data/eval/questions.jsonl` | jamais : le jeu est figé depuis l'étape 10, et la fixture conversationnelle est un fichier **séparé** |
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -1198,6 +1360,21 @@ uv run python scripts/benchmark.py --label "hybrid-k60-d50" --mode hybrid --cand
 uv run python -c "from app.core.config import get_settings; from app.retrieval.rerank import warm_up; warm_up('flashrank', get_settings())"
 uv run python scripts/search.py "how do dependencies work" --rerank flashrank --rerank-candidates 20
 uv run python scripts/ask.py "How do I define a dependency?" --mode hybrid --rerank flashrank
+
+# Transformer la requete avant de chercher - etapes 18-19, desactive par defaut
+# rewrite remplace la question, multi la garde et fusionne N formulations
+uv run python scripts/search.py "Depends" --transform rewrite
+uv run python scripts/search.py "Depends" --transform multi --transform-n 3
+uv run python scripts/benchmark.py --label "multi-n2-dense" --transform multi --transform-n 2   --top-k 10 --collection chunks_sentence --compare "dense-sentence-doctype"
+
+# Resoudre un suivi contre sa conversation - etape 18
+# --history est repetable et alterne user, assistant, user, ... en commencant par user
+uv run python scripts/ask.py "and how do I test that?"   --history "How do I override a dependency for one route?"   --history "Use app.dependency_overrides with the dependency as the key [1]."
+
+# Mesurer ce que la resolution rapporte, sur sa propre fixture de dix conversations
+uv run python scripts/validate_dataset.py --dataset data/eval/conversations.jsonl --conversations
+uv run python scripts/benchmark_conversations.py --label "conv-raw" --raw
+uv run python scripts/benchmark_conversations.py --label "conv-rewrite" --compare "conv-raw"
 uv run python scripts/benchmark.py --label "rerank-flashrank-dense-d30" --mode dense --rerank flashrank --rerank-candidates 30
 # --rerank-candidates doit être >= --top-k, sans quoi le vivier est plus court que la réponse demandée
 uv run python scripts/benchmark.py --label "rerank-flashrank-dense-d10" --mode dense --rerank flashrank --rerank-candidates 10 --top-k 10
@@ -1272,8 +1449,8 @@ docker compose down
 - [x] **Phase 4 — Évaluation du retrieval** : Recall@K, Precision@K, MRR, Hit Rate et NDCG (faite, `v0.4`).
 - [x] **Phase 5 — Recherche hybride** : combiner recherche dense et BM25 (faite ; BM25 maison et fusion RRF mesurés, `dense` reste le défaut — la règle d'acceptation n'est pas atteinte, Recall@5 0,737 contre 0,776, mais Recall@10 passe de 0,785 à 0,829).
 - [x] **Phase 6 — Reranking** : optimiser la précision des candidats (faite ; plafond du vivier mesuré à 0,884 de Recall@30 contre 0,785 au rang 5, FlashRank et Cohere livrés derrière un registre, `RERANK_MODEL` reste vide — +0,002 de Recall@5 pour 1 141 ms et une régression de 0,100 sur `code`).
-- [ ] **Phase 7 — Query rewriting** : rendre les questions conversationnelles autonomes.
-- [ ] **Phase 8 — Multi-query retrieval** : augmenter le recall par expansion de requêtes.
+- [x] **Phase 7 — Query rewriting** : rendre les questions conversationnelles autonomes (faite ; `contextualize()` livrée au-dessus de `search()`, Recall@5 0,100 → **0,600** sur la fixture conversationnelle ; `rewrite` seul mesuré et perdant, 0,684 contre 0,776).
+- [x] **Phase 8 — Multi-query retrieval** : augmenter le recall par expansion de requêtes (faite ; registre `TRANSFORMS` et fan-out derrière `search(transform=)`, `QUERY_TRANSFORM` reste vide — meilleure ligne 0,765 contre 0,776, mais Recall@10 0,807 et MRR 0,867, le meilleur du projet).
 - [ ] **Phase 9 — Compression contextuelle** : réduire le contexte aux passages pertinents.
 - [x] **Phase 10 — Citations** : produire des réponses fondées et sourcées (faites, `v0.3`).
 - [ ] **Phase 11 — Évaluation complète** : mesurer retrieval et génération.
@@ -1302,12 +1479,23 @@ Une valeur absente signifie que l'expérience n'a pas encore été exécutée ; 
 | Plafond du vivier hybride d50 (étape 17) | 0,743 | 0,879 | 0,757 | 44 ms* | — |
 | Reranking FlashRank (étape 17) | 0,779 | 0,862 | 0,788 | 1 141 ms* | — |
 | Reranking Cohere (étape 17) | non mesuré***** | non mesuré***** | non mesuré***** | non mesuré***** | ~0,15 $ si lancé***** |
+| Réécriture seule (étape 19) | 0,684 | 0,704 | 0,697 | 897 ms* | ~0,0001 $ / question****** |
+| Multi-query n=2 (étape 19) | 0,765 | 0,807† | **0,867** | 1 119 ms* | ~0,0001 $ / question****** |
+| Multi-query n=3 + FlashRank (étape 19) | 0,735 | 0,792 | 0,754 | 1 900 ms* | ~0,0001 $ / question****** |
+| Suivi conversationnel nu (étape 18) | 0,100‡ | 0,300‡ | 0,127‡ | 32 ms* | — |
+| Suivi résolu contre l'historique (étape 18) | **0,600**‡ | **0,700**‡ | **0,567**‡ | 1 069 ms* | ~0,0001 $ / question****** |
 
-\* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms), `dense-sentence-doctype` et `dense-sentence-oracle-filter` à l'étape 13 (p50 65 et 63 ms, p95 94 et 92 ms — mesurés dans la même session, donc comparables entre eux mais pas à l'étape 12, dont la session était plus rapide sur toute la ligne). `bm25-sentence` et `hybrid-k60-d20` aux étapes 14-16 (p50 2 et 83 ms, p95 4 et 116 ms). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
+\* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms), `dense-sentence-doctype` et `dense-sentence-oracle-filter` à l'étape 13 (p50 65 et 63 ms, p95 94 et 92 ms — mesurés dans la même session, donc comparables entre eux mais pas à l'étape 12, dont la session était plus rapide sur toute la ligne). `bm25-sentence` et `hybrid-k60-d20` aux étapes 14-16 (p50 2 et 83 ms, p95 4 et 116 ms). Les lignes des étapes 18-19 sont mesurées sur `chunks_sentence` à `--top-k 10`, la configuration exacte de la baseline 0,776, et incluent l'appel de transformation dans la latence : `rewrite-standalone` (p50 897 ms, p95 1 957 ms), `multi-n2-dense` (p50 1 119 ms, p95 1 879 ms), `multi-n3-dense-rerank-flashrank` (p50 1 900 ms, p95 2 345 ms) ; `conv-raw` et `conv-rewrite` sur leurs dix conversations (p50 32 et 1 069 ms). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
 
 \*\* Bout en bout via `scripts/ask.py`, sur quatre questions réelles : 851 à 1 021 tokens par appel à `gpt-4o-mini`, soit environ 0,0003 $ l'unité aux tarifs affichés. La génération domine, elle pèse plus de 95 % du temps de réponse.
 
 \*\*\* Sept questions réelles, 923 à 1 289 tokens par appel. La validation des citations est du traitement de chaîne en mémoire et ne se mesure pas à côté de l'aller-retour réseau ; la fourchette s'élargit vers le bas parce qu'un refus est court à générer, et vers le haut parce que le prompt v2 est plus long que le v1. Les métriques de qualité restent vides jusqu'à l'étape 11.
+
+† Meilleur Recall@10 des six lignes de l'étape 19, et +0,022 sur la baseline — mais le 0,829 de la ligne hybride des étapes 15-16 reste le meilleur du projet. Le MRR 0,867, lui, est bien le meilleur jamais mesuré ici.
+
+‡ Mesuré sur `data/eval/conversations.jsonl`, **dix** conversations, et **pas** sur le jeu figé de 45 questions. Ces deux lignes ne se comparent qu'entre elles : leur écart est le chiffre de l'étape 18, leur niveau absolu ne se compare à aucune autre ligne du tableau.
+
+\*\*\*\*\*\* Un appel supplémentaire à `gpt-4o-mini` par question avant la recherche, 107 à 184 tokens selon la transformation, soit environ 0,0001 $ l'unité aux tarifs affichés — à ajouter au coût de génération, pas à la place. La matrice complète des six lignes a coûté moins de 0,05 $.
 
 \*\*\*\*\* Le backend `cohere` est écrit et testé mais n'a jamais été appelé : aucune `COHERE_API_KEY` n'est configurée. Les deux lignes `rerank-cohere-*` auraient coûté environ 0,15 $ au total (38 recherches par ligne) et auraient été les premières lignes du projet non reproductibles hors ligne. « Le modèle local gratuit suffit » n'est donc **pas** un résultat de cette étape.
 
@@ -1330,4 +1518,4 @@ Chaque future phase doit mettre à jour dans le même changement :
 - [Plan global](docs/roadmap.md) — état actuel, correspondance étapes/phases/versions et index des plans par étape
 - [Spécification du socle](docs/superpowers/specs/2026-09-09-project-foundation-design.md)
 - [Plan d'implémentation du socle](docs/superpowers/plans/2026-09-09-project-foundation.md)
-- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 11 rédigées ; les suivantes sont écrites au début de leur étape
+- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 19 rédigées ; les suivantes sont écrites au début de leur étape
