@@ -226,3 +226,16 @@ def test_an_unanswerable_question_is_in_no_bucket() -> None:
     ]
     result = run_benchmark(questions, perfect, label="t", ks=(1,))
     assert result.per_doc_type == {}
+
+
+def test_deep_ks_separate_a_rank_25_hit_from_a_rank_5_one() -> None:
+    """Step 17's whole premise: the pool holds documents the top five miss."""
+    only = question("a")  # relevant_document_ids == ["doc-a"]
+    buried = scored(*[f"noise-{i}" for i in range(24)], "doc-a", *[f"tail-{i}" for i in range(5)])
+
+    result = run_benchmark([only], lambda _: buried, ks=(1, 3, 5, 10, 20, 30), label="deep")
+
+    assert result.ks == [1, 3, 5, 10, 20, 30]
+    assert result.aggregate["recall@30"] == pytest.approx(1.0)
+    assert result.aggregate["recall@20"] == pytest.approx(0.0)
+    assert result.aggregate["recall@5"] == pytest.approx(0.0)

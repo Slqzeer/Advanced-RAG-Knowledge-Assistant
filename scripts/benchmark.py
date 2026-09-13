@@ -37,7 +37,11 @@ from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
 HISTORY = Path("data/eval/results.jsonl")
-KS = (1, 3, 5, 10)
+# 20 and 30 are step 17's ceiling: a reranker cannot exceed the recall of the
+# pool it reorders, so the pool's recall at its own depth is the target to beat.
+# --top-k defaults to max(KS) and run_benchmark filters ks to those <= top_k, so
+# every existing invocation is unchanged and no past row is invalidated.
+KS = (1, 3, 5, 10, 20, 30)
 CATEGORY_COLUMNS = ("recall@5", "recall@10", "precision@5", "mrr", "ndcg@5")
 
 
