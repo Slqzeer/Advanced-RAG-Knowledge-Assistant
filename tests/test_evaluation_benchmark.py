@@ -267,3 +267,19 @@ def test_a_row_written_before_step_18_reports_no_transform() -> None:
     ]
     [row] = summarise(history, "dense-*")
     assert row[SUMMARY_COLUMNS.index("transform")] == "-"
+
+
+def test_summarise_renders_a_missing_compressor_as_a_dash() -> None:
+    """Every row written before step 20 genuinely had no compressor."""
+    history = [
+        {
+            "label": "old-row",
+            "config": {"strategy": "sentence", "chunk_size": 1000, "chunk_overlap": 200},
+            "aggregate": {"recall@5": 0.776},
+            "per_category": {},
+            "latency_p50_ms": 65.0,
+        }
+    ]
+    [row] = summarise(history, "old-row")
+    assert row[SUMMARY_COLUMNS.index("compress")] == "-"
+    assert len(row) == len(SUMMARY_COLUMNS)

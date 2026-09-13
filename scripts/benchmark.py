@@ -8,6 +8,18 @@
     uv run python scripts/benchmark.py --label "hybrid" --compare "dense-baseline"
     uv run python scripts/benchmark.py --summary "chunk-*"
 
+    uv run python scripts/benchmark.py --label "compress-d20" --top-k 20 --compress embedding
+
+For a compression arm ``--top-k`` *is* the pool depth: ``search()`` is called
+with it directly and ``compress`` reduces what comes back, so ``--top-k 20`` is
+a d20 arm. ``--compress-candidates`` exists here for symmetry with ``ask.py``
+and is recorded in ``config``; it does not drive the closure, because
+``run_benchmark`` already owns the depth through ``--top-k``. Do not wire it
+twice. Read ``recall@20`` on a compressed row as Recall@context — the fraction
+of ground-truth documents that actually reached the prompt — and ignore
+``precision@*`` entirely: its denominator is ``k`` even when fewer results came
+back, which penalises a compressor for compressing.
+
 Every row is appended to ``data/eval/results.jsonl`` with the git commit that
 produced it. That file is the README's results table and step 29's dashboard;
 rebuilding it from git history later is miserable, so it is committed.
@@ -33,6 +45,7 @@ from app.evaluation.benchmark import (  # noqa: E402
     summarise,
 )
 from app.evaluation.dataset import load_dataset  # noqa: E402
+from app.generation.compress import COMPRESSORS, compress  # noqa: E402
 from app.generation.llm import complete  # noqa: E402
 from app.models.chunks import ScoredChunk  # noqa: E402
 from app.retrieval.bm25 import default_index  # noqa: E402
@@ -231,6 +244,24 @@ def main() -> int:
         "--transform-n", type=int, help="queries `multi` produces, original included; MULTI_QUERY_N"
     )
     parser.add_argument(
+        "--compress",
+        choices=["", *sorted(COMPRESSORS)],
+        default=None,
+        help='sentence extractor run before the prompt; default: COMPRESS_METHOD, "" is off',
+    )
+    parser.add_argument(
+        "--compress-candidates",
+        type=int,
+        default=None,
+        help="pool depth retrieved when compression is on; default: COMPRESS_CANDIDATES",
+    )
+    parser.add_argument(
+        "--compress-budget",
+        type=int,
+        default=None,
+        help="characters of chunk text the compressed context may carry",
+    )
+    parser.add_argument(
         "--candidates",
         type=int,
         help="per-branch depth before fusion; default: RETRIEVAL_CANDIDATES",
@@ -289,11 +320,13 @@ def main() -> int:
     transform = args.transform if args.transform is not None else settings.query_transform
     recorder = RecordingLLM() if transform else None
 
+    compressor = args.compress if args.compress is not None else settings.compress_method
+
     def retrieve(text: str) -> list[ScoredChunk]:
         filters: dict[str, str | list[str]] = dict(base_filters)
         if facet := oracle.get(text):
             filters["doc_type"] = facet
-        return search(
+        chunks = search(
             text,
             top_k=args.top_k,
             mode=mode,
@@ -306,6 +339,17 @@ def main() -> int:
             llm=recorder,
             filters=filters or None,
             collection=collection,
+            settings=settings,
+        )
+        # Recall@context: run_benchmark scores whatever this returns, so
+        # returning the post-compression list makes recall@20 the fraction of
+        # ground-truth documents that actually reached the prompt. The same
+        # closure trick --oracle-filter already uses.
+        return compress(
+            chunks,
+            text,
+            method=compressor,
+            budget_chars=args.compress_budget,
             settings=settings,
         )
 
@@ -323,6 +367,9 @@ def main() -> int:
             "rerank_candidates": args.rerank_candidates or settings.rerank_candidates,
             "transform": transform or None,
             "transform_n": args.transform_n or settings.multi_query_n,
+            "compress": compressor or None,
+            "compress_candidates": args.compress_candidates or settings.compress_candidates,
+            "compress_budget": args.compress_budget or settings.compress_budget_chars,
             "filters": base_filters or None,
             "oracle_filter": args.oracle_filter,
             "dataset": str(args.dataset),
