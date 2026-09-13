@@ -17,7 +17,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings  # noqa: E402
-from app.evaluation.dataset import CATEGORIES, load_dataset, validate_dataset  # noqa: E402
+from app.evaluation.dataset import (  # noqa: E402
+    CATEGORIES,
+    EvalConversation,
+    EvalQuestion,
+    load_dataset,
+    validate_dataset,
+)
 from app.ingestion.clean import clean_document  # noqa: E402
 from app.ingestion.loader import load_documents  # noqa: E402
 
@@ -43,6 +49,12 @@ def corpus_document_ids(corpus_dir: Path) -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument(
+        "--conversations",
+        action="store_true",
+        help="load the file as conversations; skips the category and count floors, "
+        "which are calibrated for the frozen 50-question set",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
@@ -50,7 +62,9 @@ def main() -> int:
     if not settings.corpus_dir.exists():
         raise SystemExit(f"no corpus under {settings.corpus_dir}; run scripts/fetch_corpus.py")
     known = corpus_document_ids(settings.corpus_dir)
-    questions = load_dataset(args.dataset)
+    questions = load_dataset(
+        args.dataset, model=EvalConversation if args.conversations else EvalQuestion
+    )
 
     counts = Counter(question.category for question in questions)
     labelled = [len(q.relevant_document_ids) for q in questions if q.category != "unanswerable"]
@@ -64,13 +78,14 @@ def main() -> int:
     print(f"  held out: {held_out}")
 
     problems = validate_dataset(questions, known)
-    problems += [
-        f"category {category!r} has {counts[category]} questions, minimum {MIN_PER_CATEGORY}"
-        for category in CATEGORIES
-        if counts[category] < MIN_PER_CATEGORY
-    ]
-    if len(questions) < MIN_QUESTIONS:
-        problems.append(f"{len(questions)} questions, minimum {MIN_QUESTIONS}")
+    if not args.conversations:
+        problems += [
+            f"category {category!r} has {counts[category]} questions, minimum {MIN_PER_CATEGORY}"
+            for category in CATEGORIES
+            if counts[category] < MIN_PER_CATEGORY
+        ]
+        if len(questions) < MIN_QUESTIONS:
+            problems.append(f"{len(questions)} questions, minimum {MIN_QUESTIONS}")
 
     if problems:
         print(f"\n{len(problems)} problems:")

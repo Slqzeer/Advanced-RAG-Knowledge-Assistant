@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from app.evaluation.dataset import EvalQuestion, load_dataset, validate_dataset
+from app.evaluation.dataset import (
+    EvalConversation,
+    EvalQuestion,
+    load_dataset,
+    validate_dataset,
+)
 
 VALID = Path(__file__).parent / "data" / "eval" / "valid.jsonl"
 
@@ -96,3 +101,35 @@ def test_validate_dataset_is_silent_when_every_id_exists() -> None:
     questions = load_dataset(VALID)
     known = {"fastapi:tutorial/dependencies/index", "fastapi:tutorial/handling-errors"}
     assert validate_dataset(questions, known) == []
+
+
+def test_a_conversation_carries_its_history(tmp_path: Path) -> None:
+    path = tmp_path / "conversations.jsonl"
+    path.write_text(
+        '{"question_id": "c001", "question": "et pour docker ?",'
+        ' "category": "conceptual", "relevant_document_ids": ["fastapi:deployment/docker"],'
+        ' "history": [{"role": "user", "content": "Et pour Kubernetes ?"}]}\n',
+        encoding="utf-8",
+    )
+    [conversation] = load_dataset(path, model=EvalConversation)
+    assert conversation.history == [{"role": "user", "content": "Et pour Kubernetes ?"}]
+    assert conversation.relevant_document_ids == ["fastapi:deployment/docker"]
+
+
+def test_a_conversation_inherits_the_frozen_sets_validators(tmp_path: Path) -> None:
+    """One added field must not buy an exemption from the label rules."""
+    path = tmp_path / "conversations.jsonl"
+    path.write_text(
+        '{"question_id": "c001", "question": "et pour docker ?",'
+        ' "category": "conceptual", "relevant_document_ids": [], "history": []}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="relevant_document_ids must not be empty"):
+        load_dataset(path, model=EvalConversation)
+
+
+def test_a_conversation_file_reports_the_same_line_numbered_errors(tmp_path: Path) -> None:
+    path = tmp_path / "conversations.jsonl"
+    path.write_text("{not json}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"conversations\.jsonl:1"):
+        load_dataset(path, model=EvalConversation)

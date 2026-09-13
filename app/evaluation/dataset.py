@@ -45,11 +45,35 @@ class EvalQuestion(BaseModel):
         return self
 
 
-def load_dataset(path: Path, *, categories: Sequence[str] | None = None) -> list[EvalQuestion]:
+class EvalConversation(EvalQuestion):
+    """A labelled question plus the turns that came before it.
+
+    Subclasses rather than duplicates ``EvalQuestion``: it inherits every
+    validator the frozen set already enforces — a category from the ``Literal``,
+    non-empty ground truth, no ground truth on an ``unanswerable`` — and a second
+    loader for a file that differs by one field is how the two quietly drift.
+
+    ``history`` uses OpenAI's ``{"role", "content"}`` shape, the same one
+    ``contextualize`` and step 25's endpoint take.
+    """
+
+    history: list[dict[str, str]] = []
+
+
+def load_dataset(
+    path: Path,
+    *,
+    categories: Sequence[str] | None = None,
+    model: type[EvalQuestion] = EvalQuestion,
+) -> list[EvalQuestion]:
     """Read a JSONL question file, skipping blank and ``#`` comment lines.
 
     Every error names the line number: chasing "invalid JSON" through a fifty
     line file without one wastes an afternoon.
+
+    ``model`` selects the row type: ``EvalConversation`` for a file that carries
+    conversation history. Everything else — the comment lines, the line-numbered
+    errors, the duplicate-id check — is identical, which is the point.
     """
     questions: list[EvalQuestion] = []
     seen: set[str] = set()
@@ -58,7 +82,7 @@ def load_dataset(path: Path, *, categories: Sequence[str] | None = None) -> list
         if not line or line.startswith("#"):
             continue
         try:
-            question = EvalQuestion.model_validate_json(line)
+            question = model.model_validate_json(line)
         except ValueError as error:
             raise ValueError(f"{path}:{number}: {error}") from error
         if question.question_id in seen:
