@@ -7,7 +7,7 @@ output shapes that actually occur, not the one the prompt asks for.
 
 import pytest
 
-from app.generation.citations import parse_citations, validate_citations
+from app.generation.citations import is_refusal, parse_citations, validate_citations
 from app.models.answers import Source
 
 
@@ -163,3 +163,9 @@ def test_strict_mode_raises_instead_of_warning() -> None:
 def test_strict_mode_is_quiet_when_everything_resolves() -> None:
     text, sources, warnings = validate_citations("Uses Depends [1].", SOURCES, strict=True)
     assert (text, len(sources), warnings) == ("Uses Depends [1].", 1, [])
+
+
+def test_is_refusal_is_public_and_matches_both_languages() -> None:
+    assert is_refusal("I do not have enough information in the provided context to answer this.")
+    assert is_refusal("Je ne dispose pas des informations nécessaires.")
+    assert not is_refusal("FastAPI uses dependency injection through Depends [1].")

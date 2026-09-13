@@ -126,7 +126,7 @@ def validate_citations(
             f"invalid_citations: {', '.join(f'[{n}]' for n in invalid)} "
             f"not in the context ({len(sources)} entries)"
         )
-    if not order and not _is_refusal(answer):
+    if not order and not is_refusal(answer):
         warnings.append("answer_without_citations")
 
     return (
@@ -136,7 +136,13 @@ def validate_citations(
     )
 
 
-def _is_refusal(answer: str) -> bool:
-    """True when the answer declines rather than asserts."""
+def is_refusal(answer: str) -> bool:
+    """True when the answer declines rather than asserts.
+
+    Public since step 20: it is that step's only signal that sees *inside* a
+    surviving document. Recall@context cannot tell a context that kept the
+    answer from one that kept the right document and the wrong three sentences
+    of it; a model handed the second says so itself, in a fixed string, free.
+    """
     lowered = answer.lower()
     return any(marker in lowered for marker in REFUSAL_MARKERS)
