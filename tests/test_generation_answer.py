@@ -221,3 +221,39 @@ def test_no_rerank_still_reaches_the_retriever_as_none() -> None:
         "how do dependencies work", retriever=retriever, llm=FakeLLM(), settings=SETTINGS
     )
     assert retriever.calls[0]["rerank"] is None
+
+
+# --- conversation history (step 18) ----------------------------------------
+
+HISTORY = [
+    {"role": "user", "content": "Comment limiter la memoire d'un container Kubernetes ?"},
+    {"role": "assistant", "content": "Via resources.limits.memory [1]."},
+]
+
+
+def test_the_retriever_receives_the_standalone_query_not_the_follow_up() -> None:
+    """The whole point of step 18: "et pour docker ?" retrieves nothing on its own."""
+    retriever = FakeRetriever()
+    ask(
+        "et pour docker ?",
+        history=HISTORY,
+        retriever=retriever,
+        llm=FakeLLM("Set a memory limit [1]."),
+    )
+    assert retriever.calls[0]["query"] == "Set a memory limit [1]."
+
+
+def test_no_history_means_no_rewriting_call_at_all() -> None:
+    """Every single-turn question in the project takes this path."""
+    llm = FakeLLM("Use Depends() [1].")
+    retriever = FakeRetriever()
+    ask("How do dependencies work?", retriever=retriever, llm=llm)
+    assert retriever.calls[0]["query"] == "How do dependencies work?"
+    assert len(llm.calls) == 1  # the answer only; nothing rewrote the question
+
+
+def test_the_transform_is_threaded_to_the_retriever() -> None:
+    retriever = FakeRetriever()
+    ask("How do dependencies work?", transform="multi", transform_n=2, retriever=retriever)
+    assert retriever.calls[0]["transform"] == "multi"
+    assert retriever.calls[0]["transform_n"] == 2

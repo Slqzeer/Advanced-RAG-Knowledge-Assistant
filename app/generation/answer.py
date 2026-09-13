@@ -8,7 +8,7 @@ behind the arrows without changing this shape.
 """
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 
 from app.core.config import Settings, get_settings
 from app.generation.citations import validate_citations
@@ -17,6 +17,7 @@ from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE, Completer, complete
 from app.models.answers import Answer, RetrievalStats
 from app.models.chunks import ScoredChunk
 from app.retrieval.search import Filters, search
+from app.retrieval.transform import contextualize
 
 Retriever = Callable[..., list[ScoredChunk]]
 
@@ -30,6 +31,9 @@ NO_CONTEXT_ANSWER = (
 def answer_question(
     question: str,
     *,
+    history: Sequence[Mapping[str, str]] | None = None,
+    transform: str | None = None,
+    transform_n: int | None = None,
     top_k: int | None = None,
     mode: str | None = None,
     rerank: str | None = None,
@@ -53,6 +57,16 @@ def answer_question(
     ``mode`` selects the retriever and ``rerank`` the cross-encoder that reorders
     its output; both are threaded straight through so the measured winners of
     steps 16 and 17 reach the answer, not only the benchmark.
+
+    ``history`` is the conversation so far, as ``{"role", "content"}`` mappings.
+    Given one, the question is resolved into a standalone query before retrieval
+    — ``"et pour docker ?"`` becomes a question that means something on its own.
+    This is the one place that happens: ``search()`` takes a query string and is
+    never told a conversation exists.
+
+    ``transform`` and ``transform_n`` are threaded straight through to the
+    retriever, exactly as ``mode`` and ``rerank`` already are, so the measured
+    winner of step 19 reaches the answer and not only the benchmark.
     """
     if not question.strip():
         raise ValueError("question is empty")
@@ -62,10 +76,18 @@ def answer_question(
     llm = llm or complete
     started = time.perf_counter()
 
+    # Before retrieval and above search(): resolving a follow-up needs the
+    # conversation, and pushing that into the retrieval seam would carry it on
+    # into step 23's cache key and step 25's endpoint. With no history this
+    # returns the question and makes no call.
+    query = contextualize(question, history or [], settings=settings, llm=llm)
+
     chunks = retriever(
-        question,
+        query,
         top_k=top_k or settings.top_k,
         mode=mode,
+        transform=transform,
+        transform_n=transform_n,
         rerank=rerank,
         rerank_candidates=rerank_candidates,
         filters=filters,

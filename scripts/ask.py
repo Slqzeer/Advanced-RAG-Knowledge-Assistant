@@ -2,6 +2,11 @@
 
     uv run python scripts/ask.py "question" [--top-k 5] [--mode hybrid]
                                            [--filter doc_type=tutorial] [--show-context]
+    uv run python scripts/ask.py "et pour docker ?" --history "..." --history "..."
+
+``--history`` is repeatable and alternates user, assistant, user, ... starting
+with user. Given one, the question is resolved against it into a standalone
+query before retrieval, which is the whole of step 18.
 
 ``--show-context`` prints the exact prompt that was sent. It is the debugging
 tool you will reach for every time an answer looks wrong: nine times out of ten
@@ -19,6 +24,7 @@ from app.generation.context import build_context  # noqa: E402
 from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE  # noqa: E402
 from app.retrieval.rerank import RERANKERS  # noqa: E402
 from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
+from app.retrieval.transform import TRANSFORMS  # noqa: E402
 
 
 def main() -> int:
@@ -44,6 +50,21 @@ def main() -> int:
         help="how deep the pool goes into the cross-encoder; default: RERANK_CANDIDATES",
     )
     parser.add_argument(
+        "--history",
+        action="append",
+        default=[],
+        metavar="TEXT",
+        help="repeatable; alternates user, assistant, user, ... starting with user",
+    )
+    parser.add_argument(
+        "--transform",
+        choices=["", *sorted(TRANSFORMS)],
+        help='query transform applied before retrieval; default: QUERY_TRANSFORM, "" is off',
+    )
+    parser.add_argument(
+        "--transform-n", type=int, help="queries `multi` produces, original included; MULTI_QUERY_N"
+    )
+    parser.add_argument(
         "--show-context", action="store_true", help="print the prompt that was sent"
     )
     parser.add_argument(
@@ -53,6 +74,10 @@ def main() -> int:
     # The corpus is full of emoji and the Windows console defaults to cp1252.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     filters = parse_filters(args.filter)
+    history = [
+        {"role": "user" if index % 2 == 0 else "assistant", "content": text}
+        for index, text in enumerate(args.history)
+    ]
 
     if args.show_context:
         # Rebuilt rather than returned by answer_question: the prompt is a
@@ -63,6 +88,8 @@ def main() -> int:
             mode=args.mode,
             rerank=args.rerank,
             rerank_candidates=args.rerank_candidates,
+            transform=args.transform,
+            transform_n=args.transform_n,
             filters=filters,
         )
         context, _, _ = build_context(chunks)
@@ -71,6 +98,9 @@ def main() -> int:
 
     answer = answer_question(
         args.question,
+        history=history,
+        transform=args.transform,
+        transform_n=args.transform_n,
         top_k=args.top_k,
         mode=args.mode,
         rerank=args.rerank,
