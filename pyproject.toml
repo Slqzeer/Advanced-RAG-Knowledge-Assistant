@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Assistant documentaire technique fondé sur une architecture RAG avancée."
 requires-python = ">=3.12"
 dependencies = [
+    "cohere>=5,<6",
     "fastapi>=0.116,<1",
     "flashrank>=0.2,<1",
     "openai>=2,<3",

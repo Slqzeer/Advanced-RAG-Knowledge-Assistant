@@ -115,3 +115,46 @@ def _flashrank(
 
 
 RERANKERS["flashrank"] = _flashrank
+
+
+# The current general-purpose rerank model; English-only variants exist but the
+# corpus is bilingual by construction — the evaluation set asks in French.
+COHERE_MODEL = "rerank-v3.5"
+
+
+@lru_cache(maxsize=1)
+def _cohere_client(api_key: str) -> Any:
+    import cohere
+
+    return cohere.ClientV2(api_key=api_key)
+
+
+def _cohere(
+    query: str,
+    candidates: Sequence[ScoredChunk],
+    top_k: int,
+    settings: Settings,
+    client: Any = None,
+) -> list[tuple[int, float]]:
+    """Score the shortlist through Cohere's hosted reranker.
+
+    ``client`` is injectable so the mapping below is testable without a key and
+    without a billed call. That mapping is the whole risk of this function: the
+    API answers with ``index`` positions into the list it was sent, not with
+    documents, so getting it wrong pairs every score with the wrong chunk and
+    still produces a ranking that looks entirely reasonable.
+    """
+    if client is None:
+        if not settings.cohere_api_key:
+            raise ValueError("COHERE_API_KEY is not set; --rerank cohere needs one")
+        client = _cohere_client(settings.cohere_api_key)
+    response = client.rerank(
+        model=COHERE_MODEL,
+        query=query,
+        documents=[scored.chunk.text for scored in candidates],
+        top_n=top_k,
+    )
+    return [(int(item.index), float(item.relevance_score)) for item in response.results]
+
+
+RERANKERS["cohere"] = _cohere

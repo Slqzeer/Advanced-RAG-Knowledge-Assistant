@@ -233,3 +233,73 @@ def test_the_real_model_prefers_the_relevant_chunk() -> None:
     ]
     [best] = rerank("how do dependencies work", candidates, model="flashrank", top_k=1)
     assert "Depends()" in best.chunk.text
+
+
+# --- the Cohere backend ----------------------------------------------------
+
+
+class FakeCohereResult:
+    def __init__(self, index: int, relevance_score: float) -> None:
+        self.index = index
+        self.relevance_score = relevance_score
+
+
+class FakeCohereResponse:
+    def __init__(self, results: list[FakeCohereResult]) -> None:
+        self.results = results
+
+
+class FakeCohereClient:
+    def __init__(self, results: list[FakeCohereResult]) -> None:
+        self.results = results
+        self.calls: list[dict[str, object]] = []
+
+    def rerank(self, **kwargs: object) -> FakeCohereResponse:
+        self.calls.append(kwargs)
+        return FakeCohereResponse(self.results)
+
+
+def test_cohere_is_registered() -> None:
+    assert "cohere" in RERANKERS
+
+
+def test_cohere_maps_every_score_back_to_the_chunk_it_scored() -> None:
+    """The API answers with positions into the list it was sent. An off-by-one
+    here pairs every score with the wrong chunk and still returns a well-formed
+    ranking no aggregate metric would catch."""
+    from app.retrieval.rerank import _cohere
+
+    client = FakeCohereClient([FakeCohereResult(2, 0.93), FakeCohereResult(0, 0.11)])
+    pairs = _cohere("what is a dependency", pool(4), 2, SETTINGS, client=client)
+
+    assert pairs == [(2, pytest.approx(0.93)), (0, pytest.approx(0.11))]
+
+
+def test_cohere_sends_the_chunk_texts_in_candidate_order() -> None:
+    from app.retrieval.rerank import _cohere
+
+    client = FakeCohereClient([FakeCohereResult(0, 1.0)])
+    _cohere("q", pool(3), 2, SETTINGS, client=client)
+
+    assert client.calls[0]["documents"] == [
+        "chunk body number 0",
+        "chunk body number 1",
+        "chunk body number 2",
+    ]
+    assert client.calls[0]["query"] == "q"
+
+
+def test_cohere_asks_for_only_as_many_as_are_wanted() -> None:
+    """It bills per search; returning 30 when 5 are used is paid-for waste."""
+    from app.retrieval.rerank import _cohere
+
+    client = FakeCohereClient([FakeCohereResult(0, 1.0)])
+    _cohere("q", pool(30), 5, SETTINGS, client=client)
+    assert client.calls[0]["top_n"] == 5
+
+
+def test_cohere_without_a_key_fails_before_the_network() -> None:
+    from app.retrieval.rerank import _cohere
+
+    with pytest.raises(ValueError, match="COHERE_API_KEY"):
+        _cohere("q", pool(3), 2, Settings(cohere_api_key=None, openai_api_key=None))
