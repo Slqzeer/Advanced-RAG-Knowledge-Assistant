@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     # prompt that grows until it breaks, and the turn that disambiguates a
     # follow-up is almost always the previous one.
     history_turns: int = 4
+    # Step 20. Empty means off: unchanged behaviour until a measurement earns
+    # the change. embedding — measured at step 20, table in the README.
+    compress_method: str = ""
+    # How deep the retrieved pool goes into the compressor. Step 17 measured
+    # Recall@20 == Recall@30 in every pool, so 30 is 50 % more sentence
+    # embedding for nothing reachable.
+    compress_candidates: int = 20
+    # Characters of chunk text the compressed context may carry, headers
+    # excluded. Set to the measured size of today's top_k=5 context, so an arm
+    # that widens the pool is held at the cost of today's prompt.
+    compress_budget_chars: int = 4000  # REPLACE with Task 1 Step 10's measured p50
     corpus_dir: Path = Path("data/raw")
 
 
