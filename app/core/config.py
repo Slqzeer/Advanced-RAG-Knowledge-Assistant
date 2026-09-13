@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     # parameter that bounds what reranking can do: a reranker reorders, it
     # cannot retrieve, so the pool's own recall is its ceiling.
     rerank_candidates: int = 30
+    # Steps 18-19. Empty means off: unchanged behaviour until a measurement
+    # earns the change. rewrite | multi — compared at step 19, table in the README.
+    query_transform: str = ""
+    # How many queries `multi` retrieves with, the original included. The
+    # original is always kept, so n=1 is exactly today's behaviour.
+    multi_query_n: int = 3
+    # How many conversation turns reach the rewriter. An unbounded history is a
+    # prompt that grows until it breaks, and the turn that disambiguates a
+    # follow-up is almost always the previous one.
+    history_turns: int = 4
     corpus_dir: Path = Path("data/raw")
 
 

@@ -13,13 +13,12 @@ from collections.abc import Callable
 from app.core.config import Settings, get_settings
 from app.generation.citations import validate_citations
 from app.generation.context import MAX_CONTEXT_CHARS, build_context
-from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE, complete
+from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE, Completer, complete
 from app.models.answers import Answer, RetrievalStats
 from app.models.chunks import ScoredChunk
 from app.retrieval.search import Filters, search
 
 Retriever = Callable[..., list[ScoredChunk]]
-Completer = Callable[..., tuple[str, dict[str, int]]]
 
 # Not a setting: it never varies by environment. Step 22 will reuse it when
 # retrieval is merely weak rather than empty.

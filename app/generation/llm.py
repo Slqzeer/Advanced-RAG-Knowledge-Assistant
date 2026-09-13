@@ -6,9 +6,15 @@ nothing else in the pipeline notices. That is the whole reason ``answer.py``
 never sees a client.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 from app.ingestion.embed import build_client
+
+# The shape every caller of `complete` may substitute: the tests inject one, and
+# so do `answer_question` and `expand`. Defined here, beside the only real
+# implementation, so the three call sites cannot drift into three aliases.
+Completer = Callable[..., tuple[str, dict[str, int]]]
 
 # v1 (step 08), kept for the record:
 #
