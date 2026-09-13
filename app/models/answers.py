@@ -60,6 +60,10 @@ class Answer(BaseModel):
     # overstates provenance.
     sources: list[Source] = Field(default_factory=list)
     retrieval: RetrievalStats
+    # The characters of context the prompt actually carried. Step 20's fixed
+    # variable: a compression arm that reports a smaller Recall for a smaller
+    # prompt has said nothing until both numbers are on the same row.
+    context_chars: int = Field(ge=0, default=0)
     latency_ms: float = Field(ge=0)
     model: str
     # Captured from the first call rather than retrofitted at step 24, when

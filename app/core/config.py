@@ -77,8 +77,12 @@ class Settings(BaseSettings):
     compress_candidates: int = 20
     # Characters of chunk text the compressed context may carry, headers
     # excluded. Set to the measured size of today's top_k=5 context, so an arm
-    # that widens the pool is held at the cost of today's prompt.
-    compress_budget_chars: int = 4000  # REPLACE with Task 1 Step 10's measured p50
+    # that widens the pool is held at the cost of today's prompt. Measured at
+    # step 20 over the 38 answerable questions: the p50 of the whole context
+    # block is 4 000 characters, of which 312 are the "[n] source — title"
+    # headers build_context adds afterwards. The budget denominates chunk text,
+    # so it is the 3 688, not the 4 000.
+    compress_budget_chars: int = 3688
     corpus_dir: Path = Path("data/raw")
 
 

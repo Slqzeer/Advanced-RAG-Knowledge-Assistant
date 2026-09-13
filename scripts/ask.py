@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.generation.answer import answer_question  # noqa: E402
+from app.generation.compress import COMPRESSORS, compress  # noqa: E402
 from app.generation.context import build_context  # noqa: E402
 from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE  # noqa: E402
 from app.retrieval.rerank import RERANKERS  # noqa: E402
@@ -65,6 +66,24 @@ def main() -> int:
         "--transform-n", type=int, help="queries `multi` produces, original included; MULTI_QUERY_N"
     )
     parser.add_argument(
+        "--compress",
+        choices=["", *sorted(COMPRESSORS)],
+        default=None,
+        help='sentence extractor run before the prompt; default: COMPRESS_METHOD, "" is off',
+    )
+    parser.add_argument(
+        "--compress-candidates",
+        type=int,
+        default=None,
+        help="pool depth retrieved when compression is on; default: COMPRESS_CANDIDATES",
+    )
+    parser.add_argument(
+        "--compress-budget",
+        type=int,
+        default=None,
+        help="characters of chunk text the compressed context may carry",
+    )
+    parser.add_argument(
         "--show-context", action="store_true", help="print the prompt that was sent"
     )
     parser.add_argument(
@@ -84,13 +103,19 @@ def main() -> int:
         # debugging artefact, not part of the API contract step 25 serves.
         chunks = search(
             args.question,
-            top_k=args.top_k or 5,
+            top_k=(args.compress_candidates or 20) if args.compress else (args.top_k or 5),
             mode=args.mode,
             rerank=args.rerank,
             rerank_candidates=args.rerank_candidates,
             transform=args.transform,
             transform_n=args.transform_n,
             filters=filters,
+        )
+        # Compressed before the context is built, or --show-context prints a
+        # prompt that is not the one sent — precisely the bug the flag exists
+        # to catch.
+        chunks = compress(
+            chunks, args.question, method=args.compress, budget_chars=args.compress_budget
         )
         context, _, _ = build_context(chunks)
         print(f"--- system ---\n{SYSTEM_PROMPT}\n")
@@ -105,6 +130,9 @@ def main() -> int:
         mode=args.mode,
         rerank=args.rerank,
         rerank_candidates=args.rerank_candidates,
+        compress=args.compress,
+        compress_candidates=args.compress_candidates,
+        compress_budget=args.compress_budget,
         filters=filters,
         strict=args.strict,
     )
@@ -129,6 +157,13 @@ def main() -> int:
         f" {len(answer.sources)} cited"
         f"  |  {answer.model}  |  {tokens} tokens  |  {answer.latency_ms:.0f} ms"
     )
+    # The aggregate arms say what compression cost on average; this says what it
+    # cost here, which is the only thing a transcript can be read against.
+    if answer.context_chars:
+        print(
+            f"context: {answer.context_chars} chars"
+            f"  |  {answer.usage.get('prompt_tokens', 0)} prompt tokens"
+        )
     return 0
 
 

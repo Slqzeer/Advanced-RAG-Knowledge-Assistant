@@ -12,6 +12,8 @@ from collections.abc import Callable, Mapping, Sequence
 
 from app.core.config import Settings, get_settings
 from app.generation.citations import validate_citations
+from app.generation.compress import BatchEmbedder
+from app.generation.compress import compress as compress_chunks
 from app.generation.context import MAX_CONTEXT_CHARS, build_context
 from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE, Completer, complete
 from app.models.answers import Answer, RetrievalStats
@@ -38,6 +40,10 @@ def answer_question(
     mode: str | None = None,
     rerank: str | None = None,
     rerank_candidates: int | None = None,
+    compress: str | None = None,
+    compress_candidates: int | None = None,
+    compress_budget: int | None = None,
+    embedder: BatchEmbedder | None = None,
     filters: Filters | None = None,
     max_context_chars: int = MAX_CONTEXT_CHARS,
     strict: bool = False,
@@ -67,6 +73,18 @@ def answer_question(
     ``transform`` and ``transform_n`` are threaded straight through to the
     retriever, exactly as ``mode`` and ``rerank`` already are, so the measured
     winner of step 19 reaches the answer and not only the benchmark.
+
+    ``compress`` names a sentence extractor from ``compress.COMPRESSORS``. It
+    runs *after* retrieval and *before* ``build_context``: a retriever that
+    rewrites chunk text has stopped being one, and ``build_context`` commits in
+    its own docstring to no I/O and no model. ``None`` reads ``COMPRESS_METHOD``
+    and the empty string forces it off.
+
+    ``compress_candidates`` is the pool depth retrieved when compression is on —
+    the whole point of the stage, since step 17 measured the pool holding
+    documents no ranking could surface. With compression off, ``top_k`` is
+    retrieved unchanged and nothing about this function's behaviour differs from
+    step 19's.
     """
     if not question.strip():
         raise ValueError("question is empty")
@@ -82,9 +100,19 @@ def answer_question(
     # returns the question and makes no call.
     query = contextualize(question, history or [], settings=settings, llm=llm)
 
+    method = settings.compress_method if compress is None else compress
+    wanted = top_k or settings.top_k
+    depth = wanted
+    if method:
+        depth = compress_candidates or settings.compress_candidates
+        if depth < wanted:
+            # A pool shallower than the answer is a compressor with nothing to
+            # choose between; the same guard search() applies to rerank_candidates.
+            raise ValueError(f"compress_candidates ({depth}) must be at least top_k ({wanted})")
+
     chunks = retriever(
         query,
-        top_k=top_k or settings.top_k,
+        top_k=depth,
         mode=mode,
         transform=transform,
         transform_n=transform_n,
@@ -93,7 +121,18 @@ def answer_question(
         filters=filters,
         settings=settings,
     )
-    context, sources, dropped = build_context(chunks, max_chars=max_context_chars)
+    # Counted before compression: how many chunks the retriever produced is a
+    # retrieval fact, and a d20 run that compresses to seven must report 20.
+    pool = len(chunks)
+    chunks = compress_chunks(
+        chunks,
+        query,
+        method=method,
+        budget_chars=compress_budget,
+        settings=settings,
+        embedder=embedder,
+    )
+    context, sources, _ = build_context(chunks, max_chars=max_context_chars)
     # Counted before validation trims ``sources`` to the cited subset: how many
     # chunks reached the model is a retrieval fact, not a citation one.
     used = len(sources)
@@ -119,7 +158,8 @@ def answer_question(
     return Answer(
         answer=text,
         sources=sources,
-        retrieval=RetrievalStats(retrieved=used + dropped, used=used, dropped=dropped),
+        retrieval=RetrievalStats(retrieved=pool, used=used, dropped=pool - used),
+        context_chars=len(context),
         latency_ms=(time.perf_counter() - started) * 1000,
         model=settings.generation_model,
         usage=usage,

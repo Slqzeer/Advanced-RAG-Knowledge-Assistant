@@ -6,6 +6,7 @@ import pytest
 
 from app.core.config import Settings
 from app.generation.answer import NO_CONTEXT_ANSWER, answer_question
+from app.generation.context import build_context
 from app.models.answers import Answer
 from app.models.chunks import Chunk, ScoredChunk
 
@@ -257,3 +258,49 @@ def test_the_transform_is_threaded_to_the_retriever() -> None:
     ask("How do dependencies work?", transform="multi", transform_n=2, retriever=retriever)
     assert retriever.calls[0]["transform"] == "multi"
     assert retriever.calls[0]["transform_n"] == 2
+
+
+def test_compression_off_leaves_the_context_byte_identical() -> None:
+    """The test that lets every existing caller stay untouched."""
+    chunks = [scored(rank, f"One {rank}. Two {rank}. Three {rank}.") for rank in (1, 2, 3)]
+    llm = FakeLLM()
+    answer = ask(compress="", retriever=FakeRetriever(chunks), llm=llm)
+    expected, _, _ = build_context(chunks)
+    assert expected in llm.calls[0]["user"]
+    assert answer.context_chars == len(expected)
+
+
+def test_compress_candidates_widens_top_k_only_when_compression_is_on() -> None:
+    retriever = FakeRetriever([scored(1, "One. Two.")])
+    ask(compress="", top_k=5, compress_candidates=20, retriever=retriever)
+    assert [call["top_k"] for call in retriever.calls] == [5]
+
+    ask(
+        compress="embedding",
+        top_k=5,
+        compress_candidates=20,
+        compress_budget=10_000,
+        retriever=retriever,
+    )
+    assert [call["top_k"] for call in retriever.calls] == [5, 20]
+
+
+def test_retrieval_stats_report_the_pool_not_the_survivors() -> None:
+    """A d20 run that compresses to a handful of chunks reports 20 retrieved."""
+    pool = [scored(rank, f"Sentence {rank} here. Filler {rank} there.") for rank in range(1, 21)]
+    answer = ask(
+        compress="embedding",
+        top_k=5,
+        compress_candidates=20,
+        compress_budget=40,
+        retriever=FakeRetriever(pool),
+        embedder=lambda texts: [[1.0, 0.0]] + [[0.5, 0.866]] * (len(texts) - 1),
+    )
+    assert answer.retrieval.retrieved == 20
+    assert answer.retrieval.used + answer.retrieval.dropped == 20
+    assert answer.retrieval.used < 20
+
+
+def test_a_pool_shallower_than_the_answer_is_refused() -> None:
+    with pytest.raises(ValueError, match="compress_candidates"):
+        ask(compress="embedding", top_k=10, compress_candidates=5)
