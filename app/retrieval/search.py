@@ -17,6 +17,7 @@ from app.core.config import Settings, get_settings
 from app.ingestion.embed import EmbeddingCache, embed_query
 from app.models.chunks import Chunk, ScoredChunk
 from app.retrieval.bm25 import BM25Index, default_index
+from app.retrieval.rerank import rerank as apply_reranker
 from app.retrieval.store import INDEXED_FIELDS, chunk_from_payload, get_client
 
 Embedder = Callable[[str], list[float]]
@@ -214,7 +215,8 @@ def _hybrid(
 
 Retrieve = Callable[..., list[ScoredChunk]]
 # Mirrors chunk.STRATEGIES: the registry is how this project compares N variants
-# and promotes a winner. Step 17's reranker registers a key here.
+# and promotes a winner. Reranking is NOT a key here: it composes with every
+# mode, so it is a `rerank=` parameter and its own registry in rerank.py.
 RETRIEVERS: dict[str, Retrieve] = {"dense": _dense, "lexical": _lexical, "hybrid": _hybrid}
 
 
@@ -225,6 +227,8 @@ def search(
     mode: str | None = None,
     candidates: int | None = None,
     rrf_k: int | None = None,
+    rerank: str | None = None,
+    rerank_candidates: int | None = None,
     filters: Filters | None = None,
     collection: str | None = None,
     settings: Settings | None = None,
@@ -250,6 +254,14 @@ def search(
     and ``rrf_k`` the fusion constant. Both default to their settings and are
     ignored by the single-branch modes.
 
+    ``rerank`` names a cross-encoder from ``rerank.RERANKERS`` and is orthogonal
+    to ``mode``: it reorders whatever the chosen retriever produced. ``None``
+    reads ``RERANK_MODEL``, and the empty string forces it off, which is how a
+    dense baseline stays runnable once the default flips. ``rerank_candidates``
+    is how deep the retrieved pool goes into the cross-encoder — in hybrid mode
+    that is the depth of the *fused* list, which ``candidates`` (per-branch,
+    pre-fusion) must be at least as large as.
+
     ``collection`` overrides the configured one. Step 12 indexes one collection
     per chunking strategy so a comparison stays reproducible: recreating a single
     collection before each run makes "why did semantic lose this question?"
@@ -273,9 +285,18 @@ def search(
     if mode in ("lexical", "hybrid"):
         index = index or default_index(settings, collection)
 
-    return RETRIEVERS[mode](
+    model = settings.rerank_model if rerank is None else rerank
+    depth = top_k
+    if model:
+        depth = rerank_candidates or settings.rerank_candidates
+        if depth < top_k:
+            # A pool shallower than the answer is a reranker with nothing to
+            # choose between, and it reads downstream as "reranking did not help".
+            raise ValueError(f"rerank_candidates ({depth}) must be at least top_k ({top_k})")
+
+    results = RETRIEVERS[mode](
         query,
-        top_k=top_k,
+        top_k=depth,
         candidates=candidates or settings.retrieval_candidates,
         rrf_k=rrf_k or settings.rrf_k,
         filters=filters,
@@ -284,3 +305,6 @@ def search(
         embedder=embedder,
         index=index,
     )
+    if not model:
+        return results
+    return apply_reranker(query, results, model=model, top_k=top_k, settings=settings)

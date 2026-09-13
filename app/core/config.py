@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     # ~34 MB. The ~4 MB nano default trades away exactly the ranking precision
     # step 17 is measuring, which would make the measurement meaningless.
     flashrank_model: str = "ms-marco-MiniLM-L-12-v2"
+    # Empty means off: unchanged behaviour until step 17's measurement earns the
+    # change. flashrank | cohere — compared at step 17, table in the README.
+    rerank_model: str = ""
+    # How deep the retrieved pool goes into the cross-encoder. This is the
+    # parameter that bounds what reranking can do: a reranker reorders, it
+    # cannot retrieve, so the pool's own recall is its ceiling.
+    rerank_candidates: int = 30
     corpus_dir: Path = Path("data/raw")
 
 

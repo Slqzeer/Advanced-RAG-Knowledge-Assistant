@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 import pytest
@@ -8,6 +8,7 @@ from qdrant_client import QdrantClient
 from app.core.config import Settings, get_settings
 from app.models.chunks import Chunk, ScoredChunk
 from app.retrieval.bm25 import BM25Index
+from app.retrieval.rerank import RERANKERS
 from app.retrieval.search import matches_filters, parse_filters, rrf, search
 from app.retrieval.store import chunk_from_payload, ensure_collection, get_client, upsert_chunks
 
@@ -583,3 +584,85 @@ def test_candidates_and_rrf_k_fall_back_to_the_settings() -> None:
         top_k=5,
     )
     assert client.calls[0]["limit"] == 30
+
+
+# --- reranking (step 17) ---------------------------------------------------
+
+
+def reverse_scorer(
+    query: str, candidates: Sequence[ScoredChunk], top_k: int, settings: Settings
+) -> list[tuple[int, float]]:
+    return [(index, float(index)) for index in range(len(candidates))]
+
+
+@pytest.fixture
+def fake_reranker() -> Iterator[None]:
+    RERANKERS["reverse"] = reverse_scorer
+    yield
+    del RERANKERS["reverse"]
+
+
+def test_no_reranker_leaves_search_exactly_as_it_was() -> None:
+    """The four existing callers stay untouched only if this holds."""
+    assert [s.rank for s in run(top_k=3)] == [1, 2, 3]
+    assert [s.rerank_score for s in run(top_k=3)] == [None, None, None]
+
+
+def test_a_reranker_retrieves_deep_and_returns_top_k(fake_reranker: None) -> None:
+    client = FakeClient()
+    results = run(client=client, top_k=3, rerank="reverse", rerank_candidates=10)
+    assert client.calls[0]["limit"] == 10  # the pool, not the answer
+    assert len(results) == 3
+    assert [s.rank for s in results] == [1, 2, 3]
+    assert results[0].rerank_score == pytest.approx(9.0)
+
+
+def test_the_reranker_defaults_to_the_setting(fake_reranker: None) -> None:
+    client = FakeClient()
+    results = run(
+        client=client,
+        settings=Settings(rerank_model="reverse", rerank_candidates=8, openai_api_key=None),
+        top_k=2,
+    )
+    assert client.calls[0]["limit"] == 8
+    assert results[0].rerank_score is not None
+
+
+def test_an_empty_rerank_argument_forces_it_off(fake_reranker: None) -> None:
+    """`--rerank ""` must be able to override a configured RERANK_MODEL, or a
+    dense baseline becomes unrunnable once the default flips."""
+    client = FakeClient()
+    results = run(
+        client=client,
+        settings=Settings(rerank_model="reverse", rerank_candidates=8, openai_api_key=None),
+        top_k=2,
+        rerank="",
+    )
+    assert client.calls[0]["limit"] == 2
+    assert results[0].rerank_score is None
+
+
+def test_rerank_candidates_below_top_k_is_rejected(fake_reranker: None) -> None:
+    with pytest.raises(ValueError, match="rerank_candidates"):
+        run(top_k=10, rerank="reverse", rerank_candidates=3)
+
+
+def test_hybrid_candidates_below_the_rerank_pool_is_rejected(fake_reranker: None) -> None:
+    """The fused list is what the cross-encoder sees; two 5-deep branches cannot
+    fill a 30-deep pool, and a short pool reads downstream as 'reranking did not
+    help'."""
+    with pytest.raises(ValueError, match="candidates"):
+        run(
+            "error",
+            mode="hybrid",
+            index=bm25_index("an error occurred"),
+            top_k=5,
+            candidates=5,
+            rerank="reverse",
+            rerank_candidates=30,
+        )
+
+
+def test_an_unknown_reranker_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown reranker"):
+        run(top_k=3, rerank="nope")
