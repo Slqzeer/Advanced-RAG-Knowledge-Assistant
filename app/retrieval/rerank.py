@@ -14,6 +14,9 @@ genuinely differs between a local ONNX model and a hosted API is the scoring.
 """
 
 from collections.abc import Callable, Sequence
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
 from app.core.config import Settings, get_settings
 from app.models.chunks import ScoredChunk
@@ -72,4 +75,43 @@ def warm_up(model: str, settings: Settings) -> None:
     are a no-op, and so is an unknown name: this runs before the work, and
     failing here would fail a run that would otherwise have succeeded.
     """
-    return None
+    if model == "flashrank":
+        _ranker(settings.flashrank_model)
+
+
+# Beside the embedding cache rather than in /tmp: on Windows the library's
+# default cache_dir is neither writable nor stable across runs, and re-downloading
+# 34 MB per process is a cost with no upside.
+FLASHRANK_CACHE = Path("data/processed/flashrank")
+
+
+@lru_cache(maxsize=2)
+def _ranker(model_name: str) -> Any:
+    """The ONNX session, built once per process and per model name.
+
+    Imported here rather than at module scope so that importing this module
+    costs nothing: onnxruntime is tens of megabytes of shared library, and every
+    test, every `--mode dense` run and every script that never reranks would pay
+    for it at import time otherwise.
+    """
+    from flashrank import Ranker
+
+    FLASHRANK_CACHE.mkdir(parents=True, exist_ok=True)
+    return Ranker(model_name=model_name, cache_dir=str(FLASHRANK_CACHE))
+
+
+def _flashrank(
+    query: str, candidates: Sequence[ScoredChunk], top_k: int, settings: Settings
+) -> list[tuple[int, float]]:
+    """Score every candidate locally. ``top_k`` is ignored: the model scores the
+    whole shortlist either way, and trimming is ``rerank()``'s job."""
+    from flashrank import RerankRequest
+
+    passages = [{"id": index, "text": scored.chunk.text} for index, scored in enumerate(candidates)]
+    results = _ranker(settings.flashrank_model).rerank(
+        RerankRequest(query=query, passages=passages)
+    )
+    return [(int(result["id"]), float(result["score"])) for result in results]
+
+
+RERANKERS["flashrank"] = _flashrank

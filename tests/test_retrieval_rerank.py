@@ -166,3 +166,70 @@ def test_warm_up_is_a_no_op_for_an_unknown_backend() -> None:
     """It runs before a timed loop; a crash there would fail a benchmark that
     would otherwise have worked."""
     warm_up("nope", SETTINGS)
+
+
+# --- the FlashRank backend -------------------------------------------------
+
+
+def test_flashrank_is_registered() -> None:
+    assert "flashrank" in RERANKERS
+
+
+def test_flashrank_maps_scores_back_by_list_position() -> None:
+    """The passage id is the candidate's index, not its chunk_id: a string
+    round-trip through a third-party library is one more place to lose a
+    mapping, and the index is already unique and already an int."""
+    from app.retrieval import rerank as module
+
+    captured: dict[str, object] = {}
+
+    class FakeRanker:
+        def rerank(self, request: object) -> list[dict[str, object]]:
+            captured["passages"] = request.passages  # type: ignore[attr-defined]
+            captured["query"] = request.query  # type: ignore[attr-defined]
+            # Deliberately out of order and incomplete, like a real one.
+            return [{"id": 2, "text": "x", "score": 0.91}, {"id": 0, "text": "y", "score": 0.12}]
+
+    module._ranker.cache_clear()
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(module, "_ranker", lambda name: FakeRanker())
+    try:
+        pairs = module._flashrank("what is a dependency", pool(4), 2, SETTINGS)
+    finally:
+        monkey.undo()
+
+    assert pairs == [(2, pytest.approx(0.91)), (0, pytest.approx(0.12))]
+    assert captured["query"] == "what is a dependency"
+    assert [p["id"] for p in captured["passages"]] == [0, 1, 2, 3]  # type: ignore[index]
+    assert captured["passages"][0]["text"] == "chunk body number 0"  # type: ignore[index]
+
+
+requires_model = pytest.mark.requires_model
+
+
+@requires_model
+def test_the_real_model_prefers_the_relevant_chunk() -> None:
+    """The only test that loads ONNX weights, and the only one that proves the
+    cross-encoder reads the pair rather than the passage: the relevant chunk is
+    given the *worse* retriever score, so a reranker that passes its input
+    through cannot pass this."""
+    relevant = scored(0, 0.1)
+    irrelevant = scored(1, 0.9)
+    candidates = [
+        relevant.model_copy(
+            update={
+                "chunk": relevant.chunk.model_copy(
+                    update={"text": "Depends() injects a dependency into a path operation."}
+                )
+            }
+        ),
+        irrelevant.model_copy(
+            update={
+                "chunk": irrelevant.chunk.model_copy(
+                    update={"text": "Run the server with uvicorn on port 8000."}
+                )
+            }
+        ),
+    ]
+    [best] = rerank("how do dependencies work", candidates, model="flashrank", top_k=1)
+    assert "Depends()" in best.chunk.text

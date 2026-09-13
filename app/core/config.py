@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # The constant from the original RRF paper. Larger flattens the rank
     # weighting, smaller sharpens it.
     rrf_k: int = 60
+    # ~34 MB. The ~4 MB nano default trades away exactly the ranking precision
+    # step 17 is measuring, which would make the measurement meaningless.
+    flashrank_model: str = "ms-marco-MiniLM-L-12-v2"
     corpus_dir: Path = Path("data/raw")
 
 
