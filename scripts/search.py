@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.retrieval.rerank import RERANKERS  # noqa: E402
 from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
+from app.retrieval.transform import TRANSFORMS  # noqa: E402
 
 PREVIEW = 200
 
@@ -43,6 +44,14 @@ def main() -> int:
         type=int,
         help="how deep the pool goes into the cross-encoder; default: RERANK_CANDIDATES",
     )
+    parser.add_argument(
+        "--transform",
+        choices=["", *sorted(TRANSFORMS)],
+        help='query transform applied before retrieval; default: QUERY_TRANSFORM, "" is off',
+    )
+    parser.add_argument(
+        "--transform-n", type=int, help="queries `multi` produces, original included; MULTI_QUERY_N"
+    )
     args = parser.parse_args()
     # The corpus is full of emoji and the Windows console defaults to cp1252.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -54,6 +63,8 @@ def main() -> int:
         mode=args.mode,
         rerank=args.rerank,
         rerank_candidates=args.rerank_candidates,
+        transform=args.transform,
+        transform_n=args.transform_n,
         filters=parse_filters(args.filter),
     )
     elapsed = time.perf_counter() - started

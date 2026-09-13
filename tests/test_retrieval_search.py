@@ -11,6 +11,7 @@ from app.retrieval.bm25 import BM25Index
 from app.retrieval.rerank import RERANKERS
 from app.retrieval.search import matches_filters, parse_filters, rrf, search
 from app.retrieval.store import chunk_from_payload, ensure_collection, get_client, upsert_chunks
+from app.retrieval.transform import TRANSFORMS
 
 SETTINGS = Settings(qdrant_collection="chunks", openai_api_key=None, retrieval_mode="dense")
 
@@ -666,3 +667,107 @@ def test_hybrid_candidates_below_the_rerank_pool_is_rejected(fake_reranker: None
 def test_an_unknown_reranker_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown reranker"):
         run(top_k=3, rerank="nope")
+
+
+# --- query transforms (steps 18-19) ---------------------------------------
+
+
+def three_queries(query: str, n: int, settings: Settings, llm: Any) -> list[str]:
+    return [query, f"{query} rephrased", f"{query} again"]
+
+
+def one_query(query: str, n: int, settings: Settings, llm: Any) -> list[str]:
+    return [f"{query} rewritten"]
+
+
+@pytest.fixture
+def fake_transforms() -> Iterator[None]:
+    TRANSFORMS["triple"] = three_queries
+    TRANSFORMS["single"] = one_query
+    yield
+    del TRANSFORMS["triple"]
+    del TRANSFORMS["single"]
+
+
+def test_no_transform_leaves_search_exactly_as_it_was() -> None:
+    """The four existing callers stay untouched only if this holds, for every mode."""
+    assert [s.rank for s in run(top_k=3)] == [1, 2, 3]
+    assert [s.score for s in run(top_k=3)] == [pytest.approx(0.9 - 0.1 * i) for i in range(3)]
+    lexical = run("error", mode="lexical", index=bm25_index("error one", "error two"), top_k=2)
+    assert [s.rank for s in lexical] == [1, 2]
+
+
+def test_a_transform_retrieves_once_per_query(fake_transforms: None) -> None:
+    embedder = FakeEmbedder()
+    run(embedder=embedder, transform="triple", top_k=3)
+    assert embedder.calls == [
+        "how do dependencies work",
+        "how do dependencies work rephrased",
+        "how do dependencies work again",
+    ]
+
+
+def test_a_single_query_transform_does_not_pass_through_rrf(fake_transforms: None) -> None:
+    """rrf() over one ranking preserves the order but overwrites every score with
+    1/(k+rank). Routing `rewrite` through it would replace cosines with fusion
+    constants and make top_score incomparable to every dense row in the history."""
+    embedder = FakeEmbedder()
+    results = run(embedder=embedder, transform="single", top_k=3)
+    assert embedder.calls == ["how do dependencies work rewritten"]
+    assert results[0].score == pytest.approx(0.9)
+
+
+def test_a_chunk_found_by_every_query_outranks_one_found_by_a_single_query(
+    fake_transforms: None,
+) -> None:
+    """A test asserting only "five chunks came back" passes against a transform
+    that expands into three copies of the same query."""
+
+    class PerQueryClient(FakeClient):
+        """Chunk 0 comes back for every query; chunk 1 only for the first."""
+
+        def query_points(self, **kwargs: Any) -> FakeResponse:
+            self.calls.append(kwargs)
+            shared = make_payload(0)
+            if len(self.calls) == 1:
+                return FakeResponse([FakeHit(0.5, make_payload(1)), FakeHit(0.4, shared)])
+            return FakeResponse([FakeHit(0.9, shared)])
+
+    results = run(client=PerQueryClient(), transform="triple", top_k=2)
+    assert results[0].chunk.chunk_index == 0
+    assert results[1].chunk.chunk_index == 1
+
+
+def test_the_transform_defaults_to_the_setting(fake_transforms: None) -> None:
+    embedder = FakeEmbedder()
+    run(
+        embedder=embedder,
+        settings=Settings(_env_file=None, qdrant_collection="chunks", query_transform="single"),
+        top_k=1,
+    )
+    assert embedder.calls == ["how do dependencies work rewritten"]
+
+
+def test_an_empty_transform_argument_forces_it_off(fake_transforms: None) -> None:
+    """`--transform ""` must override a configured QUERY_TRANSFORM, or an
+    untransformed baseline becomes unrunnable once the default flips."""
+    embedder = FakeEmbedder()
+    run(
+        embedder=embedder,
+        settings=Settings(_env_file=None, qdrant_collection="chunks", query_transform="single"),
+        transform="",
+        top_k=1,
+    )
+    assert embedder.calls == ["how do dependencies work"]
+
+
+def test_an_unknown_transform_is_rejected_by_name(fake_transforms: None) -> None:
+    with pytest.raises(ValueError, match="hyde"):
+        run(transform="hyde")
+
+
+def test_a_transform_composes_with_a_reranker(fake_reranker: None, fake_transforms: None) -> None:
+    """transform= and rerank= are orthogonal; both must survive being combined."""
+    results = run(transform="triple", rerank="reverse", rerank_candidates=10, top_k=3)
+    assert len(results) == 3
+    assert results[0].rerank_score is not None

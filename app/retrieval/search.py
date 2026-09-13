@@ -1,9 +1,18 @@
-"""Query the index: a question in, ranked chunks out. No LLM here.
+"""Query the index: a question in, ranked chunks out.
 
 ``search()`` is the seam the rest of the project is built on. Step 08 calls it,
 step 11 benchmarks it, and steps 14-19 replace its internals — hybrid retrieval,
-RRF, reranking, query rewriting — without touching this signature. Everything
-here is deliberately thin so that stays true.
+RRF, reranking, query expansion — by adding parameters to it rather than by
+composing a pipeline in each of its four callers. Step 16 settled why: a stage
+every caller must remember to compose is a stage one caller eventually does not,
+and a pipeline that expands in the benchmark but not in ``scripts/ask.py`` is a
+measurement of something nobody ships.
+
+Step 18 made one line of this docstring false and it is corrected rather than
+worked around: this module *does* call a language model now, when ``transform``
+is set. It still never calls one to *generate an answer* — that is
+``app/generation/`` — and it still never learns what a conversation is.
+Contextual rewriting lives in ``answer_question``, where the conversation does.
 """
 
 from collections import defaultdict
@@ -14,11 +23,13 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Condition, FieldCondition, Filter, MatchAny, MatchValue
 
 from app.core.config import Settings, get_settings
+from app.generation.llm import Completer
 from app.ingestion.embed import EmbeddingCache, embed_query
 from app.models.chunks import Chunk, ScoredChunk
 from app.retrieval.bm25 import BM25Index, default_index
 from app.retrieval.rerank import rerank as apply_reranker
 from app.retrieval.store import INDEXED_FIELDS, chunk_from_payload, get_client
+from app.retrieval.transform import expand
 
 Embedder = Callable[[str], list[float]]
 Filters = Mapping[str, str | Sequence[str]]
@@ -229,12 +240,15 @@ def search(
     rrf_k: int | None = None,
     rerank: str | None = None,
     rerank_candidates: int | None = None,
+    transform: str | None = None,
+    transform_n: int | None = None,
     filters: Filters | None = None,
     collection: str | None = None,
     settings: Settings | None = None,
     client: QdrantClient | None = None,
     embedder: Embedder | None = None,
     index: BM25Index | None = None,
+    llm: Completer | None = None,
 ) -> list[ScoredChunk]:
     """The ``top_k`` chunks best matching ``query``, best first.
 
@@ -261,6 +275,19 @@ def search(
     is how deep the retrieved pool goes into the cross-encoder — in hybrid mode
     that is the depth of the *fused* list, which ``candidates`` (per-branch,
     pre-fusion) must be at least as large as.
+
+    ``transform`` names a query transform from ``transform.TRANSFORMS`` and is
+    orthogonal to both ``mode`` and ``rerank``: it changes the *query*, then the
+    chosen retriever runs once per query produced and ``rrf()`` fuses the
+    rankings. ``None`` reads ``QUERY_TRANSFORM``, and the empty string forces it
+    off, which is how an untransformed baseline stays runnable once the default
+    flips. ``transform_n`` is how many queries ``multi`` produces, the original
+    included.
+
+    Contextual rewriting is deliberately not reachable from here. It needs a
+    conversation, and a ``search()`` that knows what one is would push that
+    dependency into step 23's cache key and step 25's endpoint. It lives in
+    ``answer_question``.
 
     ``collection`` overrides the configured one. Step 12 indexes one collection
     per chunking strategy so a comparison stays reproducible: recreating a single
@@ -294,17 +321,39 @@ def search(
             # choose between, and it reads downstream as "reranking did not help".
             raise ValueError(f"rerank_candidates ({depth}) must be at least top_k ({top_k})")
 
-    results = RETRIEVERS[mode](
-        query,
-        top_k=depth,
-        candidates=candidates or settings.retrieval_candidates,
-        rrf_k=rrf_k or settings.rrf_k,
-        filters=filters,
-        collection=collection,
-        client=client,
-        embedder=embedder,
-        index=index,
+    transform = settings.query_transform if transform is None else transform
+    queries = (
+        expand(query, transform=transform, n=transform_n, settings=settings, llm=llm)
+        if transform
+        else [query]
     )
+
+    def retrieve(text: str) -> list[ScoredChunk]:
+        return RETRIEVERS[mode](
+            text,
+            top_k=depth,
+            candidates=candidates or settings.retrieval_candidates,
+            rrf_k=rrf_k or settings.rrf_k,
+            filters=filters,
+            collection=collection,
+            client=client,
+            embedder=embedder,
+            index=index,
+        )
+
+    if len(queries) == 1:
+        # Not an optimisation — correctness. rrf() over a single ranking keeps
+        # its order but overwrites every score with 1/(k+rank), which would
+        # replace cosine similarities with fusion constants for no change in
+        # ranking at all, and make this row's top_score incomparable to every
+        # dense row already in the history.
+        results = retrieve(queries[0])
+    else:
+        # In hybrid mode this is the second rrf() in the path: once per query to
+        # fuse the two branches, then once across queries. That composes because
+        # RRF reads ranks and never scores — fusing fused *ranks* is well
+        # defined in a way that fusing fused scores would not be.
+        results = rrf([retrieve(text) for text in queries], k=rrf_k or settings.rrf_k, top_k=depth)
     if not model:
         return results
     return apply_reranker(query, results, model=model, top_k=top_k, settings=settings)
