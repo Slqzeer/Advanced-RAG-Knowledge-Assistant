@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     # headers build_context adds afterwards. The budget denominates chunk text,
     # so it is the 3 688, not the 4 000.
     compress_budget_chars: int = 3688
+    # Step 21. Exponent on unit length when the compressor spends its budget:
+    # effective = score / len(unit) ** penalty. 0.0 is step 20's shipped
+    # behaviour byte-for-byte, 1.0 is relevance per character (the
+    # fractional-knapsack ordering, and step 20's own hypothesis), negative
+    # rewards long units. Stays 0.0 until step 21's rule is met.
+    compress_length_penalty: float = 0.0
     corpus_dir: Path = Path("data/raw")
 
 

@@ -202,3 +202,99 @@ def test_the_char_span_still_points_at_the_original_document_region() -> None:
     # Provenance, not length: char_start/char_end say where the chunk was cut
     # from, which is what a citation needs and what compression does not change.
     assert (out[0].chunk.char_start, out[0].chunk.char_end) == (0, len(text))
+
+
+LONG = "Mount the router on the application and include every dependency it needs. "
+SHORT = "Use Depends. "
+
+
+def penalised(penalty: float) -> Settings:
+    return SETTINGS.model_copy(update={"compress_length_penalty": penalty})
+
+
+THIRD = "Return a JSONResponse from the handler. "
+
+
+def test_alpha_zero_still_produces_step_20s_exact_output() -> None:
+    """The control has to be provable, not asserted: every step 20 row in
+    answers.jsonl was produced by the path this parameter now shares.
+
+    A golden string rather than "arm A equals arm B": comparing two runs of the
+    same configuration passes against an implementation that ignores the penalty
+    AND against one that applies it wrongly. The literal below pins selection
+    order, document-order reassembly and GAP placement in one assertion.
+    """
+    chunks = [make_chunk(SHORT + LONG + THIRD)]
+    embedder = fake_embedder({SHORT.strip(): 0.60, LONG.strip(): 0.55, THIRD.strip(): 0.50})
+
+    kept = compress(
+        chunks,
+        "q",
+        # Forces the greedy fill. The default budget exceeds this fixture, and
+        # compress() would take its `<= budget` early return without ever
+        # reaching the code under test.
+        budget_chars=len(SHORT) + len(THIRD) + 10,
+        settings=penalised(0.0),
+        embedder=embedder,
+    )
+
+    assert [c.chunk.text for c in kept] == [
+        "Use Depends. […] Return a JSONResponse from the handler."
+    ]
+
+
+def test_a_positive_alpha_prefers_the_shorter_unit() -> None:
+    """Relevance per character: step 20's hypothesis, and the fractional-knapsack
+    ordering. It is also what this design predicts will hurt `code`, because the
+    900-character fence q018 lost is exactly the unit it charges most."""
+    budget = len(SHORT) + 4
+    chunks = [make_chunk(SHORT + LONG)]
+    embedder = fake_embedder({SHORT.strip(): 0.60, LONG.strip(): 0.55})
+
+    kept = compress(
+        chunks,
+        "q",
+        budget_chars=budget,
+        settings=penalised(1.0),
+        embedder=embedder,
+    )
+
+    assert kept[0].chunk.text == SHORT.strip()
+
+
+def test_a_negative_alpha_prefers_the_longer_unit() -> None:
+    """The direction that would rescue q018: a fence is expensive and embeds
+    poorly against a natural-language question, so raw cosine already loses it."""
+    chunks = [make_chunk(SHORT + LONG)]
+    embedder = fake_embedder({SHORT.strip(): 0.60, LONG.strip(): 0.55})
+
+    kept = compress(
+        chunks,
+        "q",
+        budget_chars=len(LONG) + 4,
+        settings=penalised(-0.5),
+        embedder=embedder,
+    )
+
+    assert kept[0].chunk.text == LONG.strip()
+
+
+def test_a_positive_alpha_buys_two_cheap_units_instead_of_one_expensive_one() -> None:
+    """The mechanism, not just the ordering: at the same budget, charging by
+    length fits the 1st and 3rd units and skips the long 2nd, where pure
+    relevance order would have spent the budget on the 2nd alone."""
+    chunks = [make_chunk(SHORT + LONG + THIRD)]
+    embedder = fake_embedder({SHORT.strip(): 0.60, LONG.strip(): 0.55, THIRD.strip(): 0.50})
+
+    kept = compress(
+        chunks,
+        "q",
+        budget_chars=len(SHORT) + len(LONG),
+        settings=penalised(1.0),
+        embedder=embedder,
+    )
+
+    assert "Depends" in kept[0].chunk.text
+    assert "JSONResponse" in kept[0].chunk.text
+    assert "Mount the router" not in kept[0].chunk.text
+    assert GAP in kept[0].chunk.text

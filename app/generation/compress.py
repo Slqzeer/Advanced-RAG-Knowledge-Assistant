@@ -128,6 +128,14 @@ def compress(
     README is ``usage.prompt_tokens`` off the API response, not an estimate
     derived from this one.
 
+    ``COMPRESS_LENGTH_PENALTY`` is the exponent on a unit's length when the
+    budget is spent: ``effective = score / len(unit) ** penalty``. At 0.0 — the
+    default, and every step 20 row — the budget is spent in pure relevance
+    order. At 1.0 it is spent in relevance-per-character order, which is what
+    step 20 proposed after ``q018`` lost three code blocks to cheaper prose;
+    note that dividing by length *charges* that fence more, so a negative
+    penalty is the direction that favours it. Step 21 measures both.
+
     Rank order is preserved and never touched. Steps 16, 17 and 19 spent this
     project's entire ranking budget; a compressor that also reordered would
     confound the two in a single number.
@@ -162,7 +170,16 @@ def compress(
         return list(chunks)  # nothing to cut, and nothing to pay an embedder for
 
     scores = COMPRESSORS[method](query, [text for _, _, text in units], settings, embedder)
-    order = sorted(range(len(units)), key=lambda index: scores[index], reverse=True)
+    # What the budget is spent by. At penalty 0.0 this is `scores` itself and not
+    # a float division that happens to round to it — every step 20 row in
+    # answers.jsonl was produced by that path, and "identical" has to mean it.
+    penalty = settings.compress_length_penalty
+    effective = (
+        scores
+        if penalty == 0.0
+        else [score / max(len(units[index][2]), 1) ** penalty for index, score in enumerate(scores)]
+    )
+    order = sorted(range(len(units)), key=lambda index: effective[index], reverse=True)
 
     # Greedy by score, charging each unit its own length. The first is kept even
     # if it alone blows the budget, for build_context's reason: an empty context
@@ -180,7 +197,7 @@ def compress(
     # charge for. One trim pass enforces the real budget rather than an estimate
     # of it; it runs a handful of times at most.
     while len(kept) > 1 and sum(len(t) for t in _texts(units, kept).values()) > budget:
-        kept.discard(min(kept, key=lambda index: scores[index]))
+        kept.discard(min(kept, key=lambda index: effective[index]))
 
     texts = _texts(units, kept)
     return [
