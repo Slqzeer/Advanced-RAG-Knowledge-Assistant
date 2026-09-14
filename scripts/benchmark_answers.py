@@ -3,6 +3,7 @@
     uv run python scripts/benchmark_answers.py --label answers-k5
     uv run python scripts/benchmark_answers.py --label answers-compress-d20 \
         --compress embedding --compress-candidates 20
+    uv run python scripts/benchmark_answers.py --label ragas-d20-a0 --ragas
 
 One row per run in `data/eval/answers.jsonl`. Three numbers per row: how many
 characters of context the prompt carried, how many `prompt_tokens` the provider
@@ -15,8 +16,11 @@ ranking metrics. This produces neither. Forcing it into `BenchmarkResult` would
 mean inventing a `recall@5` for `summarise()` to render.
 
 Refusal rate is a blunt binary signal and that is exactly its value at step 20:
-it has no tuning surface, so it cannot be tuned into agreement. RAGAS judges an
-answer properly at step 21.
+it has no tuning surface, so it cannot be tuned into agreement. Step 21 adds
+``--ragas``, which judges the answer itself — faithfulness, response relevancy
+and context precision — on the same run and therefore the same row. The two
+belonging to one row is the whole reason this lives here rather than in a fourth
+benchmark script: step 20's finding is that they disagreed on ``q018``.
 """
 
 import argparse
@@ -33,6 +37,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings  # noqa: E402
 from app.evaluation.dataset import load_dataset  # noqa: E402
+from app.evaluation.judge import (  # noqa: E402
+    METRICS,
+    JudgeSample,
+    JudgeScores,
+    judge,
+    mean_scores,
+)
 from app.generation.answer import answer_question  # noqa: E402
 from app.generation.citations import is_refusal  # noqa: E402
 from app.generation.compress import COMPRESSORS  # noqa: E402
@@ -81,16 +92,47 @@ def main() -> int:
         help="run the out-of-corpus questions instead; a refusal there is correct",
     )
     parser.add_argument("--no-save", action="store_true", help="print only, append nothing")
+    parser.add_argument(
+        "--ragas",
+        action="store_true",
+        help="judge each answer as well as counting refusals; costs judge calls",
+    )
+    parser.add_argument(
+        "--ragas-metrics",
+        default=",".join(sorted(METRICS)),
+        help=f"comma-separated subset of {sorted(METRICS)}",
+    )
+    parser.add_argument("--judge-model", default=None, help="default: JUDGE_MODEL")
+    parser.add_argument(
+        "--length-penalty",
+        type=float,
+        default=None,
+        help="compressor budget exponent; default: COMPRESS_LENGTH_PENALTY",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
     settings = get_settings()
+    overrides = {
+        key: value
+        for key, value in (
+            ("judge_model", args.judge_model),
+            ("compress_length_penalty", args.length_penalty),
+        )
+        if value is not None
+    }
+    # model_copy rather than four more parameters threaded through
+    # answer_question: both of these are already read from `settings` at the
+    # bottom of the call stack, and the arm-per-run shape means one object per
+    # run is the whole requirement.
+    settings = settings.model_copy(update=overrides) if overrides else settings
     questions = [q for q in load_dataset(args.dataset) if not q.held_out]
     questions = [q for q in questions if (q.category == "unanswerable") == args.unanswerable]
     if not questions:
         raise SystemExit("no questions selected")
 
     rows: list[dict[str, Any]] = []
+    samples: list[JudgeSample] = []
     for question in questions:
         started = time.perf_counter()
         try:
@@ -101,6 +143,7 @@ def main() -> int:
                 compress_candidates=args.compress_candidates,
                 compress_budget=args.compress_budget,
                 settings=settings,
+                include_contexts=args.ragas,
             )
         except Exception as error:  # noqa: BLE001 — one transient API error must not
             # cost a 38-question run; it is recorded as a row, never swallowed.
@@ -112,18 +155,59 @@ def main() -> int:
                 "category": question.category,
                 "refused": is_refusal(answer.answer),
                 "context_chars": answer.context_chars,
+                # Relevancy penalises terse answers as incomplete: a correct
+                # one-clause answer measures 0.278 where the same fact stated
+                # fully measures 0.992. An arm that changes answer length
+                # therefore moves relevancy for a reason that is not answer
+                # quality, and reporting the length beside the score is the
+                # only thing that lets a reader tell the two apart.
+                "answer_chars": len(answer.answer),
                 "prompt_tokens": answer.usage.get("prompt_tokens", 0),
                 "retrieved": answer.retrieval.retrieved,
                 "used": answer.retrieval.used,
                 "latency_ms": (time.perf_counter() - started) * 1000,
             }
         )
+        if args.ragas:
+            samples.append(
+                JudgeSample(
+                    question_id=question.question_id,
+                    question=question.question,
+                    answer=answer.answer,
+                    contexts=answer.contexts,
+                )
+            )
 
     scored = [row for row in rows if "error" not in row]
     chars_p50, chars_p95 = percentiles([float(r["context_chars"]) for r in scored])
+    answer_p50, answer_p95 = percentiles([float(r["answer_chars"]) for r in scored])
     tokens_p50, tokens_p95 = percentiles([float(r["prompt_tokens"]) for r in scored])
     latency_p50, latency_p95 = percentiles([float(r["latency_ms"]) for r in scored])
     refusals = sum(1 for row in scored if row["refused"])
+
+    metric_names = [name.strip() for name in args.ragas_metrics.split(",") if name.strip()]
+    judged = judge(samples, metrics=metric_names, settings=settings) if args.ragas else []
+    by_id = {result.question_id: result for result in judged}
+    for row in rows:
+        judged_row = by_id.get(str(row.get("question_id")))
+        if judged_row is None:
+            continue
+        row["ragas"] = judged_row.scores
+        if judged_row.errors:
+            row["ragas_errors"] = judged_row.errors
+
+    # Grouped from `scored` rather than from `judged` so a category is named by
+    # the dataset, not by which questions happened to survive the judge.
+    per_category: dict[str, list[JudgeScores]] = {}
+    for row in scored:
+        judged_row = by_id.get(str(row["question_id"]))
+        if judged_row is not None:
+            per_category.setdefault(str(row["category"]), []).append(judged_row)
+
+    ragas_overall = mean_scores(judged)
+    ragas_by_category = {
+        category: mean_scores(results) for category, results in sorted(per_category.items())
+    }
 
     result = {
         "label": args.label,
@@ -137,13 +221,20 @@ def main() -> int:
             "collection": settings.qdrant_collection,
             "generation_model": settings.generation_model,
             "unanswerable": args.unanswerable,
+            "judge_model": settings.judge_model,
+            "length_penalty": settings.compress_length_penalty,
         },
         "questions": len(scored),
         "failures": len(rows) - len(scored),
         "refusals": refusals,
         "refusal_rate": refusals / len(scored) if scored else 0.0,
+        "ragas": ragas_overall,
+        "ragas_by_category": ragas_by_category,
+        "ragas_failures": sum(len(r.errors) for r in judged),
         "context_chars_p50": chars_p50,
         "context_chars_p95": chars_p95,
+        "answer_chars_p50": answer_p50,
+        "answer_chars_p95": answer_p95,
         "prompt_tokens_p50": tokens_p50,
         "prompt_tokens_p95": tokens_p95,
         "latency_p50_ms": latency_p50,
@@ -156,6 +247,17 @@ def main() -> int:
     print(f"context chars    p50 {chars_p50:.0f}   p95 {chars_p95:.0f}")
     print(f"prompt tokens    p50 {tokens_p50:.0f}   p95 {tokens_p95:.0f}")
     print(f"latency ms       p50 {latency_p50:.0f}   p95 {latency_p95:.0f}")
+    print(f"answer chars     p50 {answer_p50:.0f}   p95 {answer_p95:.0f}")
+
+    for name, value in sorted(ragas_overall.items()):
+        print(f"{name:<16} {value:.3f}")
+    if ragas_by_category:
+        print()
+        for category, values in sorted(ragas_by_category.items()):
+            rendered = "  ".join(f"{k} {v:.3f}" for k, v in sorted(values.items()))
+            print(f"{category:<14} {rendered}")
+    if result["ragas_failures"]:
+        print(f"\n{result['ragas_failures']} judge failures — see ragas_errors in the row")
 
     if not args.no_save:
         with HISTORY.open("a", encoding="utf-8") as history:
