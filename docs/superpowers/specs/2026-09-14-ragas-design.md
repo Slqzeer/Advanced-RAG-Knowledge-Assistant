@@ -344,10 +344,25 @@ Fixed before the first arm, and run first:
 1. a refusal on an answerable question scores **response relevancy < 0.3**;
 2. a synthetic answer carrying a claim absent from its contexts scores
    **faithfulness < 0.5**;
-3. a context list containing one relevant and three irrelevant chunks scores
-   **context precision < 0.6**;
+3. a context list whose single relevant chunk sits *below* three irrelevant ones
+   scores **context precision < 0.6**;
 4. a complete, correct answer to the same question scores **response relevancy
    > 0.7**.
+
+Clause 3 was corrected after Task 6 measured what this metric actually is.
+`ContextPrecisionWithoutReference` is average precision over **ranked** verdicts, not
+precision over a set: a relevant chunk at rank 1 scores 1.0 however much junk follows
+it. The original fixture put the relevant chunk first and therefore measured the
+metric's definition rather than the judge's discrimination — it returned 0.9999999999
+and could not have returned anything else. The threshold is untouched at 0.6; only the
+fixture changed, so that the clause tests the property it always claimed to.
+
+**This has a consequence for how the arms are read.** `compress()` preserves rank order
+and never reorders, so across every arm in this step the top context is the same chunk
+the retriever ranked first. Context precision will therefore be high and nearly flat
+between arms, and it is the least informative of the three metrics for this comparison.
+It is still reported — it is what catches an arm that pads the context below the useful
+material — but a step 21 conclusion must not rest on it.
 
 Clause 4 was added after Task 1 measured a correct but terse answer at **0.278**
 relevancy - close enough to clause 1's threshold to matter. Three clauses that
