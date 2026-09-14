@@ -7,6 +7,13 @@ dependencies = [
     "cohere>=5,<6",
     "fastapi>=0.116,<1",
     "flashrank>=0.2,<1",
+    # Never imported directly: pinned only because ragas 0.4.3 unconditionally
+    # imports the removed `langchain_community.chat_models.vertexai` module in
+    # ragas/llms/base.py, and langchain-community 0.4 dropped that module.
+    # langchain-community<0.4 still ships it, so `import ragas` works. See
+    # ragas issues #2745, #2753, #2995. Remove this pin once ragas stops
+    # importing that module (or drops the unconditional Vertex AI import).
+    "langchain-community>=0.3,<0.4",
     "openai>=2,<3",
     "pydantic-settings>=2.10,<3",
     "qdrant-client>=1.15,<2",
