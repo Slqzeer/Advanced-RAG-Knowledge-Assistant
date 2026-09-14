@@ -300,12 +300,17 @@ assumed — only the metric import path, class names, and the non-uniform
 
 Judge model: `gpt-4o` (`settings.judge_model`, confirmed by printing it —
 no silent fall-back). Embedding model: `text-embedding-3-small`. Git commit
-under test: `0ed1716d4809061334aec928e1059627dc07eb58`. Run:
-`uv run pytest tests/test_evaluation_judge.py -m requires_api -v -s`, real
-API, 4 tests, 291.88s wall clock. `pytest`'s assertion messages only print on
-failure, so the three passing scores below were captured by a second,
-throwaway call to `judge()` against the same three fixtures right after
-(same cost class, four more real judge calls — not committed as a script).
+under test: `0ed1716d4809061334aec928e1059627dc07eb58` (round 1) /
+`e30ec90` (plan ruling that produced round 2's corrected fixture).
+
+### Round 1 — the original clause 3 fixture measured the metric's definition, not the judge
+
+Run: `uv run pytest tests/test_evaluation_judge.py -m requires_api -v -s`,
+real API, 4 tests, 291.88s wall clock. `pytest`'s assertion messages only
+print on failure, so the three passing scores below were captured by a
+second, throwaway call to `judge()` against the same three fixtures right
+after (same cost class, four more real judge calls — not committed as a
+script).
 
 ```
 test_a_refusal_scores_near_zero_on_relevancy               PASSED
@@ -319,7 +324,7 @@ test_three_irrelevant_contexts_score_low_on_context_precision  FAILED
 | 1 | refusal | relevancy | `< 0.3` | `0.0` | PASS, margin 0.3 — an instrument with headroom, matches the controller's independent probe (`0.000`) exactly |
 | 2 | fabrication | faithfulness | `< 0.5` | `0.0` | PASS, margin 0.5 — headroom, matches the probe (`0.000`) exactly |
 | 4 | good-full | relevancy | `> 0.7` | `0.9924229958201524` | PASS, margin 0.29 — matches the controller's independent probe (`0.992`) to three significant figures |
-| 3 | one relevant + three irrelevant | context_precision | `< 0.6` | `0.9999999999` | **FAIL**, by 0.4 — not a near-miss |
+| 3 (original) | relevant chunk first, 3 irrelevant after | context_precision | `< 0.6` | `0.9999999999` | **FAIL**, by 0.4 — not a near-miss |
 
 Clause 1, 2 and 4 land within rounding of the controller's independent
 `gpt-4o` probe (`0.000`, `0.000`, `0.992`) and of Task 5's 7-question
@@ -351,21 +356,73 @@ verdicts `[1, 0, 0, 0]` (only the first context relevant), average precision
 is `(1/1 · 1) / 1 = 1.0`: a relevant context ranked first scores a perfect
 1.0 regardless of how many irrelevant contexts follow it, because AP only
 credits precision at the ranks where a relevant item actually appears. The
-fixture places the one relevant context (`CONTEXT`) first in the list, which
-is exactly the ordering this metric rewards most. `0.9999999999` (not exactly
-`1.0`, from the `+ 1e-10` denominator epsilon in ragas' implementation) is
-the metric doing arithmetic correctly on the fixture as written — this is
-real, documented metric behavior, not a wiring bug in this project's code.
+original fixture placed the one relevant context (`CONTEXT`) first in the
+list, which is exactly the ordering this metric rewards most. `0.9999999999`
+(not exactly `1.0`, from the `+ 1e-10` denominator epsilon in ragas'
+implementation) is the metric doing arithmetic correctly on the fixture as
+written — real, documented metric behavior, not a wiring bug in this
+project's code.
 
-**Per the brief's rule: the threshold is not adjusted, the fixture is not
-reordered, and no measurement arm runs.** `LLMContextPrecisionWithoutReference`
-answers "were the useful contexts ranked ahead of the useless ones," not "what
-fraction of the sent context was useless" — a real question for a reranker
-arm, but not the one clause 3 was trying to ask with this ordering. This
-project's context-precision arms should be read as a ranking-quality signal,
-not a padding-detection signal, until a differently-ordered fixture (relevant
-context placed last, or interleaved) is measured against this same threshold.
+**Dead end, kept for the next person who writes a context-precision
+fixture:** a single relevant chunk anywhere in the list is not a control on
+this metric — its *rank* is. Putting the relevant chunk first tests nothing
+about padding; it tests whether AP-over-ranked-verdicts is implemented
+correctly, which is a property of ragas, not of this project's judge. To
+make the fixture measure "does padding hurt the score" instead, the relevant
+chunk has to be the one the padding sits *above*.
 
-**GATE VERDICT: FAIL (3/4 clauses pass; clause 3 fails on a genuine metric-shape
-finding, not a wiring defect).** Per the task brief and the controller's
-instructions, no measurement arm (Tasks 7-9) runs following this result.
+Per the gate's own rule, round 1 did not adjust the threshold or reorder the
+fixture on the spot — it stopped, reported BLOCKED with all four numbers,
+and no measurement arm ran. The controller ruled on the fixture separately
+(commit `e30ec90`): the threshold of `0.6` stays exactly where the spec fixed
+it; only the chunk ordering in the fixture changes, and a second assertion is
+added so that "scores low" alone can never again be mistaken for
+discrimination.
+
+### Round 2 — corrected fixture, both directions asserted
+
+`test_three_irrelevant_contexts_score_low_on_context_precision` was replaced
+with `test_context_precision_charges_for_padding_above_the_relevant_chunk`,
+which judges the *same four chunks* in two orders and asserts both:
+
+- `buried`: `[*PADDING, CONTEXT]` — the relevant chunk is last, three padding
+  chunks are ranked ahead of it.
+- `surfaced`: `[CONTEXT, *PADDING]` — the relevant chunk is first (this is
+  round 1's fixture, now used as the positive control rather than the whole
+  test).
+
+Run: `uv run pytest tests/test_evaluation_judge.py -m requires_api -v -s`,
+real API, 4 tests (this test alone makes two judge calls), 367.45s wall
+clock (0:06:07).
+
+```
+test_a_refusal_scores_near_zero_on_relevancy                              PASSED
+test_a_fabricated_claim_scores_low_on_faithfulness                        PASSED
+test_a_good_full_answer_scores_high_on_relevancy                          PASSED
+test_context_precision_charges_for_padding_above_the_relevant_chunk       PASSED
+
+4 passed, 10 deselected in 367.45s (0:06:07)
+```
+
+Exact scores (`pytest` prints PASSED without the value; captured by the same
+throwaway `judge()` probe pattern as round 1, six real judge calls total for
+all four clauses this round):
+
+| Clause | Fixture | Metric | Threshold | Actual | Margin | Verdict |
+|---|---|---|---|---|---|---|
+| 1 | refusal | relevancy | `< 0.3` | `0.0` | 0.3 | PASS — headroom |
+| 2 | fabrication | faithfulness | `< 0.5` | `0.0` | 0.5 | PASS — headroom |
+| 4 | good-full | relevancy | `> 0.7` | `0.9924229958201524` | 0.29 | PASS |
+| 3, buried | `[*PADDING, CONTEXT]` | context_precision | `< 0.6` | `0.249999999975` | 0.35 | PASS — headroom |
+| 3, surfaced | `[CONTEXT, *PADDING]` | context_precision | `> 0.9` | `0.9999999999` | 0.0999... | PASS |
+
+All four clauses pass, and clause 3 now proves both halves the way clause
+1/4 already do for relevancy: the *same* four chunks score low when the
+relevant one is buried under padding and high when it is surfaced ahead of
+it, which is a genuine ranking-discrimination result rather than a metric
+computing average precision on a fixture that could only ever return one
+number.
+
+**GATE VERDICT: PASS.** All four clauses pass with real headroom (buried
+`0.25` vs. threshold `0.6`; surfaced `0.9999999999` vs. threshold `0.9`).
+Tasks 7-9 may proceed.
