@@ -246,15 +246,20 @@ def test_alpha_zero_still_produces_step_20s_exact_output() -> None:
 def test_a_positive_alpha_prefers_the_shorter_unit() -> None:
     """Relevance per character: step 20's hypothesis, and the fractional-knapsack
     ordering. It is also what this design predicts will hurt `code`, because the
-    900-character fence q018 lost is exactly the unit it charges most."""
-    budget = len(SHORT) + 4
+    900-character fence q018 lost is exactly the unit it charges most.
+
+    The long unit deliberately scores *higher* on raw relevance than the short
+    one. Without that, the short unit wins on raw score alone and the assertion
+    holds at every penalty, including none — the test would pass against an
+    implementation that ignored this parameter completely.
+    """
     chunks = [make_chunk(SHORT + LONG)]
-    embedder = fake_embedder({SHORT.strip(): 0.60, LONG.strip(): 0.55})
+    embedder = fake_embedder({SHORT.strip(): 0.50, LONG.strip(): 0.60})
 
     kept = compress(
         chunks,
         "q",
-        budget_chars=budget,
+        budget_chars=len(LONG) + 4,
         settings=penalised(1.0),
         embedder=embedder,
     )
