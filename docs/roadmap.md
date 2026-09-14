@@ -76,7 +76,7 @@ Four things later steps own:
 | 14-16 | Phase 5-6 — Hybrid + RRF | `v0.5`-`v0.6` | Dense + BM25 fused. **Done — hybrid loses Recall@5 (0.737 vs 0.776) and wins Recall@10 (0.829 vs 0.785); `dense` stays the default, and the Recall@10−Recall@5 gap opens from 0.009 to 0.092.** |
 | 17 | Phase 6 — Reranking | `v0.7` | Top-30 recall, top-5 precision, measured latency cost. **Done — the pool holds 0.884 Recall@30 against 0.785 at rank 5, and FlashRank captures none of it: Recall@5 0.779 (+0.002), p50 1 141 ms, `code` −0.100; `RERANK_MODEL` stays empty.** |
 | 18-19 | Phase 7-8 — Query transforms | `v0.8`-`v0.9` | "et pour docker ?" resolves against conversation history. **Done — resolution works and is the step's one clear win (Recall@5 0.100 → 0.600 on a ten-conversation fixture), but neither `rewrite` (0.684) nor `multi` (best 0.765) beats the 0.776 baseline; `QUERY_TRANSFORM` stays empty.** |
-| 20 | Phase 9 — Compression | `v1.2` | Same answer quality, fewer context tokens. |
+| 20 | Phase 9 — Compression | `v1.0` | Same answer quality, fewer context tokens. **Done, and the brief was wrong twice over: the tokens went *up* 11 %, and the win is recall, not cost.** A 20-chunk pool compressed into the budget 5 whole chunks occupied moves Recall@context 0.721 → **0.814** (ceiling 0.836), `multi_doc` 0.552 → **0.792**, refusal 0.316 → **0.211**, +79 ms. First pre-registered rule met in five steps; `COMPRESS_METHOD=embedding`. |
 | 21 | Phase 11 — RAGAS | `v1.3` | Faithfulness and answer relevance, not just retrieval. |
 | 22 | Phase 12 — Guardrails | `v1.6` | Refuses when retrieval is weak; survives injected instructions in documents. |
 | 23 | Phase 13 — Cache | `v1.4` | Cache-hit latency and cost deltas. |
@@ -85,9 +85,15 @@ Four things later steps own:
 | 26-28 | Phase 16-17 — Docker, tests, CI | `v1.0` | `docker compose up` and a green pipeline with RAG regression gates. |
 | 29-30 | — | — | Benchmark dashboard and the README that tells the whole story. |
 
+**The tag column past step 20 is provisional.** It was written to track README phase
+numbers rather than step order, which is why it reads `v1.3` at step 21 and `v1.0` at
+step 25. Step 20 shipped as **`v1.0`** — the next tag after the `v0.9` actually in the
+repo — so that number is now taken, and each remaining tag is assigned when its step
+lands rather than promised here.
+
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-19:
+Detailed, executable plans exist for steps 02-20:
 
 | Step | Plan |
 |---|---|
@@ -106,8 +112,9 @@ Detailed, executable plans exist for steps 02-19:
 | 14-16 Hybrid search and RRF | [`2026-09-13-step-14-16-hybrid-rrf.md`](superpowers/plans/2026-09-13-step-14-16-hybrid-rrf.md), design: [`2026-09-13-hybrid-rrf-design.md`](superpowers/specs/2026-09-13-hybrid-rrf-design.md) |
 | 17 Cross-encoder reranking | [`2026-09-13-step-17-reranking.md`](superpowers/plans/2026-09-13-step-17-reranking.md), design: [`2026-09-13-reranking-design.md`](superpowers/specs/2026-09-13-reranking-design.md) |
 | 18-19 Query transforms | [`2026-09-13-step-18-19-query-transforms.md`](superpowers/plans/2026-09-13-step-18-19-query-transforms.md), design: [`2026-09-13-query-transforms-design.md`](superpowers/specs/2026-09-13-query-transforms-design.md) |
+| 20 Contextual compression | [`2026-09-13-step-20-compression.md`](superpowers/plans/2026-09-13-step-20-compression.md), design: [`2026-09-13-compression-design.md`](superpowers/specs/2026-09-13-compression-design.md), transcripts: [`transcripts-step-20.md`](superpowers/plans/transcripts-step-20.md) |
 
-**Steps 20-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: how much context compression can drop before faithfulness moves, whether a score floor can carry refusal at all, what a cache key has to include. Writing those plans now would mean inventing the answers — steps 12-19 each answered their own question only by running it, and four of them answered 'no'. Each plan gets written at the start of its own step, with step 11's numbers in hand.
+**Steps 21-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: whether a score floor can carry refusal at all, what a cache key has to include. Writing those plans now would mean inventing the answers — steps 12-20 each answered their own question only by running it, four of them answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with step 11's numbers in hand.
 
 ## How a step lands
 
@@ -143,6 +150,7 @@ app/
 ├── generation/llm.py          # 08  single LLM call
 ├── generation/answer.py      # 08  retrieve -> context -> prompt -> Answer
 ├── generation/citations.py   # 09  parse and validate [n] references
+├── generation/compress.py    # 20  ranked chunks -> shorter ranked chunks, to a budget
 ├── evaluation/dataset.py     # 10  load and validate the eval set
 ├── evaluation/metrics.py     # 11  recall@k, precision@k, mrr, ndcg, hit rate
 ├── evaluation/benchmark.py   # 11  run the set, emit a markdown row
@@ -152,7 +160,8 @@ scripts/
 ├── index_corpus.py           # 06
 ├── ask.py                    # 08
 ├── benchmark.py              # 11
-└── benchmark_conversations.py # 18  the conv-raw / conv-rewrite delta
+├── benchmark_conversations.py # 18  the conv-raw / conv-rewrite delta
+└── benchmark_answers.py      # 20  refusal rate, context chars, real prompt_tokens
 ```
 
 `api/` is last on purpose. A CLI proves the pipeline works; HTTP is packaging.
