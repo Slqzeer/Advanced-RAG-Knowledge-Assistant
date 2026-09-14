@@ -295,3 +295,77 @@ assumed — only the metric import path, class names, and the non-uniform
 `ascore` calls differ from the brief's draft. Remember the signature split:
 `Faithfulness` and `LLMContextPrecisionWithoutReference` both need
 `retrieved_contexts`; `ResponseRelevancy` does not accept it.
+
+## Task 6 — the calibration gate
+
+Judge model: `gpt-4o` (`settings.judge_model`, confirmed by printing it —
+no silent fall-back). Embedding model: `text-embedding-3-small`. Git commit
+under test: `0ed1716d4809061334aec928e1059627dc07eb58`. Run:
+`uv run pytest tests/test_evaluation_judge.py -m requires_api -v -s`, real
+API, 4 tests, 291.88s wall clock. `pytest`'s assertion messages only print on
+failure, so the three passing scores below were captured by a second,
+throwaway call to `judge()` against the same three fixtures right after
+(same cost class, four more real judge calls — not committed as a script).
+
+```
+test_a_refusal_scores_near_zero_on_relevancy               PASSED
+test_a_fabricated_claim_scores_low_on_faithfulness          PASSED
+test_a_good_full_answer_scores_high_on_relevancy            PASSED
+test_three_irrelevant_contexts_score_low_on_context_precision  FAILED
+```
+
+| Clause | Fixture | Metric | Threshold | Actual | Verdict |
+|---|---|---|---|---|---|
+| 1 | refusal | relevancy | `< 0.3` | `0.0` | PASS, margin 0.3 — an instrument with headroom, matches the controller's independent probe (`0.000`) exactly |
+| 2 | fabrication | faithfulness | `< 0.5` | `0.0` | PASS, margin 0.5 — headroom, matches the probe (`0.000`) exactly |
+| 4 | good-full | relevancy | `> 0.7` | `0.9924229958201524` | PASS, margin 0.29 — matches the controller's independent probe (`0.992`) to three significant figures |
+| 3 | one relevant + three irrelevant | context_precision | `< 0.6` | `0.9999999999` | **FAIL**, by 0.4 — not a near-miss |
+
+Clause 1, 2 and 4 land within rounding of the controller's independent
+`gpt-4o` probe (`0.000`, `0.000`, `0.992`) and of Task 5's 7-question
+unanswerable smoke arm (`relevancy 0.000`). Three of four clauses have now
+been corroborated by three independent runs each.
+
+**Clause 3 failed. Diagnosed per the brief's Step 5, in order:**
+
+1. **`contexts` populated?** Yes — this test calls `judge()` directly with
+   `contexts` set to the 4-element list in the fixture (`CONTEXT` plus three
+   irrelevant strings); there is no benchmark-script row extraction between
+   the fixture and the judge for this test, so there is nothing to
+   mis-populate.
+2. **Judge the model expected?** Confirmed by printing `get_settings().judge_model`
+   directly: `gpt-4o`. No silent fall-back.
+3. **The metric the one expected, called the way its signature wants?**
+   Read `app/evaluation/judge.py::_context_precision`: it constructs
+   `ContextPrecisionWithoutReference(llm=llm)` and calls
+   `.ascore(user_input=question, response=answer, retrieved_contexts=contexts)`
+   — `response` carries the answer, not the refusal-shaped fixtures used by
+   clauses 1/2, so the metric is not inverted.
+
+All three diagnostics came back clean. Reading the ragas source
+(`ragas/metrics/collections/context_precision/metric.py`,
+`_calculate_average_precision`) confirms why: `ContextPrecisionWithoutReference`
+is **average precision over a per-context relevance verdict, in the order the
+contexts were given** — not "fraction of contexts judged relevant." With
+verdicts `[1, 0, 0, 0]` (only the first context relevant), average precision
+is `(1/1 · 1) / 1 = 1.0`: a relevant context ranked first scores a perfect
+1.0 regardless of how many irrelevant contexts follow it, because AP only
+credits precision at the ranks where a relevant item actually appears. The
+fixture places the one relevant context (`CONTEXT`) first in the list, which
+is exactly the ordering this metric rewards most. `0.9999999999` (not exactly
+`1.0`, from the `+ 1e-10` denominator epsilon in ragas' implementation) is
+the metric doing arithmetic correctly on the fixture as written — this is
+real, documented metric behavior, not a wiring bug in this project's code.
+
+**Per the brief's rule: the threshold is not adjusted, the fixture is not
+reordered, and no measurement arm runs.** `LLMContextPrecisionWithoutReference`
+answers "were the useful contexts ranked ahead of the useless ones," not "what
+fraction of the sent context was useless" — a real question for a reranker
+arm, but not the one clause 3 was trying to ask with this ordering. This
+project's context-precision arms should be read as a ranking-quality signal,
+not a padding-detection signal, until a differently-ordered fixture (relevant
+context placed last, or interleaved) is measured against this same threshold.
+
+**GATE VERDICT: FAIL (3/4 clauses pass; clause 3 fails on a genuine metric-shape
+finding, not a wiring defect).** Per the task brief and the controller's
+instructions, no measurement arm (Tasks 7-9) runs following this result.

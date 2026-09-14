@@ -47,10 +47,16 @@ strict = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+# requires_api spends real money on every collection, unlike requires_qdrant
+# (skips itself at runtime when the server is unreachable) and requires_model
+# (just slow) — nothing short of excluding it by default keeps a plain
+# `pytest` free. An explicit `-m requires_api` on the command line still wins:
+# pytest keeps only the last `-m`, so this default is a fallback, not a floor.
+addopts = "-ra -m \"not requires_api\""
 markers = [
     "requires_qdrant: needs a running Qdrant (docker compose up -d qdrant)",
     "requires_model: downloads and loads the FlashRank ONNX weights",
+    "requires_api: spends real judge calls against the OpenAI API",
 ]
 pythonpath = ["."]
 testpaths = ["tests"]

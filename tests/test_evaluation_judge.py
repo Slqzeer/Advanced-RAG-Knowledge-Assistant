@@ -155,3 +155,114 @@ def test_mean_scores_averages_only_the_rows_that_scored() -> None:
 def test_mean_scores_of_nothing_is_empty_not_zero() -> None:
     """Zero is a score. "Not measured" is an em dash — roadmap rule 1."""
     assert mean_scores([]) == {}
+
+
+# --- the calibration gate, against the real judge --------------------------
+#
+# Part A of the spec: before any measurement arm runs, four fixtures prove the
+# judge separates good from bad rather than scoring everything the same. Three
+# check that a bad answer scores low; the fourth checks a good one scores
+# high, because a metric stuck near zero would pass the first three and still
+# be useless.
+
+CONTEXT = (
+    "FastAPI provides Depends(), which you place in the signature of a path "
+    "operation function to declare a dependency. Dependencies may themselves "
+    "declare dependencies, and FastAPI resolves the whole tree per request."
+)
+
+
+@pytest.mark.requires_api
+def test_a_refusal_scores_near_zero_on_relevancy() -> None:
+    """Part A, clause 1. This is q018's exact failure shape, and a judge that
+    cannot see it cannot judge the arm it was built to judge."""
+    results = judge(
+        [
+            JudgeSample(
+                question_id="cal-refusal",
+                question="How do I declare a dependency in FastAPI?",
+                answer=(
+                    "I could not find anything about this in the indexed "
+                    "documentation, so I cannot answer it."
+                ),
+                contexts=[CONTEXT],
+            )
+        ],
+        metrics=["relevancy"],
+    )
+
+    assert results[0].scores["relevancy"] < 0.3, results[0]
+
+
+@pytest.mark.requires_api
+def test_a_fabricated_claim_scores_low_on_faithfulness() -> None:
+    """Part A, clause 2. Every claim below is absent from the context, and the
+    answer is fluent, well-formed and confident — the failure refusal rate misses."""
+    results = judge(
+        [
+            JudgeSample(
+                question_id="cal-fabrication",
+                question="How do I declare a dependency in FastAPI?",
+                answer=(
+                    "Declare it with the @dependency decorator, which caches the "
+                    "result in Redis for 300 seconds by default and retries three "
+                    "times before raising DependencyTimeout."
+                ),
+                contexts=[CONTEXT],
+            )
+        ],
+        metrics=["faithfulness"],
+    )
+
+    assert results[0].scores["faithfulness"] < 0.5, results[0]
+
+
+@pytest.mark.requires_api
+def test_a_good_full_answer_scores_high_on_relevancy() -> None:
+    """Part A, clause 4 - the other half of clause 1. Three clauses that all
+    check a bad answer scores low would pass against a metric stuck near zero,
+    which would then report every compression arm as equally bad."""
+    results = judge(
+        [
+            JudgeSample(
+                question_id="cal-good",
+                question="How do I declare a dependency in FastAPI?",
+                answer=(
+                    "In FastAPI you declare a dependency by placing Depends() in the "
+                    "signature of your path operation function. You pass the callable "
+                    "that produces the value, for example "
+                    "`def read_items(commons = Depends(common_parameters))`. FastAPI "
+                    "resolves the whole dependency tree once per request, and "
+                    "dependencies may themselves declare further dependencies."
+                ),
+                contexts=[CONTEXT],
+            )
+        ],
+        metrics=["relevancy"],
+    )
+
+    assert results[0].scores["relevancy"] > 0.7, results[0]
+
+
+@pytest.mark.requires_api
+def test_three_irrelevant_contexts_score_low_on_context_precision() -> None:
+    """Part A, clause 3. One relevant chunk in four is the shape a wider pool
+    produces, and the metric has to charge for the other three."""
+    results = judge(
+        [
+            JudgeSample(
+                question_id="cal-precision",
+                question="How do I declare a dependency in FastAPI?",
+                answer="You declare it with Depends() in the path operation signature.",
+                contexts=[
+                    CONTEXT,
+                    "Deploy with Docker by writing a Dockerfile that runs uvicorn.",
+                    "WebSocket endpoints are declared with @app.websocket.",
+                    "Release notes for 0.115.0: fixed a regression in form parsing.",
+                ],
+            )
+        ],
+        metrics=["context_precision"],
+    )
+
+    assert results[0].scores["context_precision"] < 0.6, results[0]
