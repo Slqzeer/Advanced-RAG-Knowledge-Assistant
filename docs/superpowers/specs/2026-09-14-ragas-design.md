@@ -345,9 +345,17 @@ Fixed before the first arm, and run first:
 2. a synthetic answer carrying a claim absent from its contexts scores
    **faithfulness < 0.5**;
 3. a context list containing one relevant and three irrelevant chunks scores
-   **context precision < 0.6**.
+   **context precision < 0.6**;
+4. a complete, correct answer to the same question scores **response relevancy
+   > 0.7**.
 
-If any of the three misses, the wiring is wrong, **no arm is run and no
+Clause 4 was added after Task 1 measured a correct but terse answer at **0.278**
+relevancy - close enough to clause 1's threshold to matter. Three clauses that
+each check a *bad* answer scores low would pass against a metric stuck near zero,
+and that metric would then report every arm as equally bad. The pair proves
+separation, not just a low number.
+
+If any of the four misses, the wiring is wrong, **no arm is run and no
 compressor conclusion is drawn.** A judge that returns 0.9 for everything
 produces a full results table that is entirely noise, and nothing downstream
 would catch it.
