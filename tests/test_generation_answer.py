@@ -319,3 +319,37 @@ def test_retrieval_stats_report_the_pool_not_the_survivors() -> None:
 def test_a_pool_shallower_than_the_answer_is_refused() -> None:
     with pytest.raises(ValueError, match="compress_candidates"):
         ask(compress="embedding", top_k=10, compress_candidates=5)
+
+
+def test_contexts_are_empty_unless_asked_for() -> None:
+    """Step 25's POST /query body must not echo thousands of characters of corpus."""
+    assert ask().contexts == []
+
+
+def test_contexts_are_the_chunk_texts_that_reached_the_model() -> None:
+    """Not the retrieved pool and not the rendered block: the judge scores what
+    the model was shown, and build_context adds "[n] source — title" headers that
+    are identical across arms and are not corpus text."""
+    retriever = FakeRetriever([scored(1, "alpha body"), scored(2, "beta body")])
+
+    answer = ask(retriever=retriever, include_contexts=True)
+
+    assert answer.contexts == ["alpha body", "beta body"]
+
+
+def test_a_chunk_build_context_dropped_is_not_reported_as_a_context() -> None:
+    """build_context keeps chunks whole or not at all and stops at max_chars.
+    A context list longer than what was sent overstates what the judge saw."""
+    retriever = FakeRetriever([scored(1, "a" * 80), scored(2, "b" * 80)])
+
+    answer = ask(retriever=retriever, include_contexts=True, max_context_chars=120)
+
+    assert answer.contexts == ["a" * 80]
+    assert answer.retrieval.used == 1
+
+
+def test_a_question_with_no_context_reports_no_contexts() -> None:
+    answer = ask(retriever=FakeRetriever([]), include_contexts=True)
+
+    assert answer.contexts == []
+    assert answer.answer == NO_CONTEXT_ANSWER

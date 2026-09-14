@@ -46,6 +46,7 @@ def answer_question(
     embedder: BatchEmbedder | None = None,
     filters: Filters | None = None,
     max_context_chars: int = MAX_CONTEXT_CHARS,
+    include_contexts: bool = False,
     strict: bool = False,
     settings: Settings | None = None,
     retriever: Retriever | None = None,
@@ -85,6 +86,11 @@ def answer_question(
     documents no ranking could surface. With compression off, ``top_k`` is
     retrieved unchanged and nothing about this function's behaviour differs from
     step 19's.
+
+    ``include_contexts`` returns the chunk texts that reached the model on the
+    ``Answer``. Off by default: step 21's judge needs them, step 25's endpoint
+    does not, and rebuilding them outside this function by re-running search and
+    compression could diverge from what was actually sent.
     """
     if not question.strip():
         raise ValueError("question is empty")
@@ -136,6 +142,10 @@ def answer_question(
     # Counted before validation trims ``sources`` to the cited subset: how many
     # chunks reached the model is a retrieval fact, not a citation one.
     used = len(sources)
+    # Sliced to ``used``, not to ``chunks``: build_context keeps chunks whole or
+    # not at all and stops at max_chars, so a longer list would claim the model
+    # saw something it never received.
+    contexts = [scored.chunk.text for scored in chunks[:used]] if include_contexts else []
     warnings: list[str] = []
 
     if chunks:
@@ -160,6 +170,7 @@ def answer_question(
         sources=sources,
         retrieval=RetrievalStats(retrieved=pool, used=used, dropped=pool - used),
         context_chars=len(context),
+        contexts=contexts,
         latency_ms=(time.perf_counter() - started) * 1000,
         model=settings.generation_model,
         usage=usage,
