@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_cache_path: Path = Path("data/processed/embeddings.sqlite")
     generation_model: str = "gpt-4o-mini"
+    # Step 21's judge, deliberately not generation_model: a model grading its own
+    # output rates it higher than a third party's, and the absolute faithfulness
+    # number has to survive steps 22-25 changing the generator.
+    judge_model: str = "gpt-4o"
     # Step 12 compared four: sentence won on Recall@5 (0.776 vs 0.713 recursive),
     # and 1000/200 was the peak of both the size and the overlap sweep.
     chunk_strategy: str = "sentence"
