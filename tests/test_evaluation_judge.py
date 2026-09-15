@@ -110,6 +110,29 @@ def test_a_failure_on_one_sample_leaves_every_other_sample_scored() -> None:
     assert results[2].scores["faithfulness"] == 0.4
 
 
+def test_a_stuck_call_times_out_and_the_other_samples_still_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One stuck call must not hold the whole arm for 600s under the SDK default.
+    CALL_TIMEOUT_S is patched to a tiny value so the test does not actually wait."""
+    monkeypatch.setattr("app.evaluation.judge.CALL_TIMEOUT_S", 0.05)
+
+    class SlowScorer:
+        async def __call__(self, sample: JudgeSample) -> float:
+            if sample.question == "slow?":
+                await asyncio.sleep(10.0)
+                return 1.0
+            return 0.9
+
+    samples = [sample("q001", "slow?"), sample("q002", "fast?")]
+    results = judge(samples, settings=SETTINGS, scorers={"faithfulness": SlowScorer()})
+
+    assert results[0].scores == {}
+    assert "timeout" in results[0].errors["faithfulness"].lower()
+    assert "0.05" in results[0].errors["faithfulness"]
+    assert results[1].scores["faithfulness"] == 0.9
+
+
 def test_a_nan_is_recorded_as_an_error_not_as_a_score() -> None:
     """ragas returns NaN when its own internal parse fails. Averaged in, one NaN
     poisons the whole arm and the row looks like a measurement."""

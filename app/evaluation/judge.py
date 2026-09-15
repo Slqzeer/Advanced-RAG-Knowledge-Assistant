@@ -42,6 +42,11 @@ from app.core.config import Settings, get_settings
 # re-runnable. Add a retry when a run actually loses rows to it.
 CONCURRENCY = 4
 
+# Generous against a measured p95 of about 78s (relevancy), so a normal call never
+# trips it. Its job is narrower: stop one stuck call from holding a 38-question arm
+# for roughly half an hour under the OpenAI SDK's default of 600s with retries.
+CALL_TIMEOUT_S = 180.0
+
 # One scorer per metric, and it owns *calling* its ragas metric as well as
 # constructing it. The three `ascore` signatures do not agree — AnswerRelevancy
 # takes no `retrieved_contexts` — so a single uniform `await` at the call site
@@ -158,7 +163,14 @@ async def _score_one(
     for name, scorer in scorers.items():
         async with gate:
             try:
-                value = await scorer(sample)
+                value = await asyncio.wait_for(scorer(sample), timeout=CALL_TIMEOUT_S)
+            except TimeoutError:
+                # asyncio.TimeoutError is TimeoutError as of 3.11, and is itself an
+                # Exception subclass — the except below would catch it too, but its
+                # message would just say "TimeoutError: " with nothing to name the
+                # limit that tripped.
+                errors[name] = f"timeout: exceeded {CALL_TIMEOUT_S}s call limit"
+                continue
             except Exception as error:  # noqa: BLE001 — one transient API error must
                 # not cost a 38-question run; it is recorded as a row, never swallowed.
                 errors[name] = f"{type(error).__name__}: {error}"
