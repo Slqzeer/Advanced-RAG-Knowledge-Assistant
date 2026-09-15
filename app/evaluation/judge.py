@@ -37,10 +37,13 @@ from ragas.metrics.collections import (
 
 from app.core.config import Settings, get_settings
 
-# ponytail: four at a time, no backoff. A 429 inside a 38-question run fails that
-# one sample and is recorded as an error, which is survivable because the arm is
-# re-runnable. Add a retry when a run actually loses rows to it.
-CONCURRENCY = 4
+# ponytail: ten at a time, no backoff. A 38-question arm at 4 took 25-30 minutes
+# and did not survive a session; at 10 it is roughly 9 minutes. A 429 inside the
+# run fails that one sample and is recorded as an error, which is survivable
+# because the arm is re-runnable, but every arm must report its ragas_failures
+# count and an arm with a large count is invalid and re-run at a lower value.
+# Add a retry when a run actually loses rows to it.
+CONCURRENCY = 10
 
 # One scorer per metric, and it owns *calling* its ragas metric as well as
 # constructing it. The three `ascore` signatures do not agree — AnswerRelevancy
