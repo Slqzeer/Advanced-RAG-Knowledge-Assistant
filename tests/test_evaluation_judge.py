@@ -166,6 +166,16 @@ def test_no_samples_is_an_empty_list_and_builds_no_judge() -> None:
     assert judge([], settings=SETTINGS) == []
 
 
+def test_importing_the_judge_turns_off_ragas_usage_tracking() -> None:
+    # ragas posts a usage event with a blocking `requests.post` on every metric
+    # call, inside the event loop. Where its host is slow to resolve, that froze
+    # the loop ~11s per call and timed out 55 of ragas-k5's 114 judge calls.
+    from ragas._analytics import do_not_track
+
+    do_not_track.cache_clear()
+    assert do_not_track()
+
+
 def test_mean_scores_averages_only_the_rows_that_scored() -> None:
     samples = [sample("q001", "first?"), sample("q002", "second?"), sample("q003", "third?")]
     scorer = FakeScorer({"first?": 1.0, "third?": 0.0}, raises_on={"second?"})

@@ -22,8 +22,16 @@ answer correctness are an em dash in the README until reference answers exist.
 
 import asyncio
 import math
+import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
+
+# Before any ragas import. ragas posts a usage event with a synchronous
+# `requests.post` on every metric call, from inside the event loop. Where its
+# tracking host resolves slowly that blocked the loop ~11s per call, so four
+# "concurrent" calls ran in series and 55 of ragas-k5's 114 judge calls hit
+# CALL_TIMEOUT_S. setdefault, so an explicit opt-in still wins.
+os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,8 +50,8 @@ from app.core.config import Settings, get_settings
 # re-runnable. Add a retry when a run actually loses rows to it.
 CONCURRENCY = 4
 
-# Generous against a measured p95 of about 78s (relevancy), so a normal call never
-# trips it. Its job is narrower: stop one stuck call from holding a 38-question arm
+# Generous: a call takes 3-7s. (An earlier "p95 of about 78s" was the usage-tracking
+# stall above, not the API.) Its job is narrower: stop one stuck call from holding a 38-question arm
 # for roughly half an hour under the OpenAI SDK's default of 600s with retries.
 CALL_TIMEOUT_S = 180.0
 
