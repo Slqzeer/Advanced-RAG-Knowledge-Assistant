@@ -45,10 +45,13 @@ from ragas.metrics.collections import (
 
 from app.core.config import Settings, get_settings
 
-# ponytail: four at a time, no backoff. A 429 inside a 38-question run fails that
-# one sample and is recorded as an error, which is survivable because the arm is
-# re-runnable. Add a retry when a run actually loses rows to it.
-CONCURRENCY = 4
+# A gpt-4o key at 30k tokens/min, not CONCURRENCY, sets how long an arm takes
+# (~14 min). At four at a time with the SDK's default 2 retries, ragas-k5 lost 97
+# of 114 judge calls to 429s; with 10 retries it still lost 15, and the ones lost
+# are the long-context samples, so the mean is biased, not just thinner. Two at a
+# time wastes less of the budget on bursts that were always going to be refused.
+CONCURRENCY = 2
+MAX_RETRIES = 10
 
 # Generous: a call takes 3-7s. (An earlier "p95 of about 78s" was the usage-tracking
 # stall above, not the API.) Its job is narrower: stop one stuck call from holding a 38-question arm
@@ -157,7 +160,7 @@ METRICS["context_precision"] = _context_precision
 
 def _build_scorers(names: Sequence[str], settings: Settings) -> dict[str, Scorer]:
     """One client, one judge, one embedder, shared by every metric in the run."""
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=MAX_RETRIES)
     llm = llm_factory(settings.judge_model, client=client)
     embeddings = embedding_factory("openai", model=settings.embedding_model, client=client)
     return {name: METRICS[name](llm, embeddings) for name in names}
