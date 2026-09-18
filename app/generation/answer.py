@@ -9,9 +9,10 @@ behind the arrows without changing this shape.
 
 import time
 from collections.abc import Callable, Mapping, Sequence
+from typing import Literal
 
 from app.core.config import Settings, get_settings
-from app.generation.citations import validate_citations
+from app.generation.citations import is_refusal, validate_citations
 from app.generation.compress import BatchEmbedder
 from app.generation.compress import compress as compress_chunks
 from app.generation.context import MAX_CONTEXT_CHARS, build_context
@@ -23,8 +24,9 @@ from app.retrieval.transform import contextualize
 
 Retriever = Callable[..., list[ScoredChunk]]
 
-# Not a setting: it never varies by environment. Step 22 will reuse it when
-# retrieval is merely weak rather than empty.
+# Not a setting: it never varies by environment. Step 22 designed a second fixed
+# refusal for weak retrieval and rejected it offline — no score floor separates
+# this corpus's answerable questions from its near-miss unanswerable ones.
 NO_CONTEXT_ANSWER = (
     "I could not find anything about this in the indexed documentation, so I cannot answer it."
 )
@@ -148,6 +150,7 @@ def answer_question(
     contexts = [scored.chunk.text for scored in chunks[:used]] if include_contexts else []
     warnings: list[str] = []
 
+    refusal: Literal["no_context", "model_declined"] | None
     if chunks:
         text, usage = llm(
             SYSTEM_PROMPT,
@@ -159,11 +162,13 @@ def answer_question(
             # filtered response. Returning it hides that behind a valid object.
             raise ValueError("the model returned an empty answer")
         text, sources, warnings = validate_citations(text, sources, strict=strict)
+        refusal = "model_declined" if is_refusal(text) else None
     else:
         # No call: with an empty context the only thing a model can produce is an
         # invention, and it would be charged for. Nothing to validate either —
         # a refusal with no context to cite is the right answer, not a warning.
         text, usage, sources = NO_CONTEXT_ANSWER, {}, []
+        refusal = "no_context"
 
     return Answer(
         answer=text,
@@ -175,4 +180,5 @@ def answer_question(
         model=settings.generation_model,
         usage=usage,
         warnings=warnings,
+        refusal=refusal,
     )

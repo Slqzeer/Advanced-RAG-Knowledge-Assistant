@@ -138,6 +138,8 @@ def main() -> int:
     )
 
     print(f"{answer.answer}\n")
+    if answer.refusal:
+        print(f"(refused: {answer.refusal})\n")
     # Above the sources, not below: a warning under a tidy citation list is a
     # warning nobody reads. Every number below appears in the answer, and every
     # number in the answer appears below — that is what step 09 buys.

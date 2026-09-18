@@ -25,8 +25,9 @@ GAP = "\x00"
 
 # A refusal has nothing to cite and is the correct answer, so it must not be
 # flagged as ungrounded. One list, reused: step 12's guardrails need the same one.
-# ponytail: substring matching, English and French only. Replace with the
-# structured refusal signal if step 22 makes refusal a first-class outcome.
+# ponytail: substring matching, English and French only. Since step 22 callers
+# read Answer.refusal; this list only decides its "model_declined" case. Replace
+# it if the model's output ever becomes structured.
 REFUSAL_MARKERS = (
     "i do not have enough information",
     "i don't have enough information",

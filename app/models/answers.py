@@ -5,6 +5,8 @@ and the record step 24 traces. Designing it once means the endpoint is a wrapper
 over an existing object rather than a redesign of one.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -77,3 +79,7 @@ class Answer(BaseModel):
     # A flawed answer with an honest warning is more useful than a stack trace,
     # and step 11's benchmark can count these. Exceptions live in strict mode.
     warnings: list[str] = Field(default_factory=list)
+    # Step 22. Why the answer declined, or None when it did not. Read this, not
+    # the text: "no_context" is structural, "model_declined" is is_refusal() on
+    # what the model wrote, because text is the only channel a model has.
+    refusal: Literal["no_context", "model_declined"] | None = None

@@ -29,6 +29,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -45,7 +46,6 @@ from app.evaluation.judge import (  # noqa: E402
     mean_scores,
 )
 from app.generation.answer import answer_question  # noqa: E402
-from app.generation.citations import is_refusal  # noqa: E402
 from app.generation.compress import COMPRESSORS  # noqa: E402
 
 HISTORY = Path("data/eval/answers.jsonl")
@@ -153,7 +153,11 @@ def main() -> int:
             {
                 "question_id": question.question_id,
                 "category": question.category,
-                "refused": is_refusal(answer.answer),
+                "refused": answer.refusal is not None,
+                "refusal": answer.refusal,
+                # Per row, because step 22's Rule P compares citation warnings
+                # between arms and no row before this one recorded them.
+                "warnings": answer.warnings,
                 "context_chars": answer.context_chars,
                 # Relevancy penalises terse answers as incomplete: a correct
                 # one-clause answer measures 0.278 where the same fact stated
@@ -184,6 +188,8 @@ def main() -> int:
     tokens_p50, tokens_p95 = percentiles([float(r["prompt_tokens"]) for r in scored])
     latency_p50, latency_p95 = percentiles([float(r["latency_ms"]) for r in scored])
     refusals = sum(1 for row in scored if row["refused"])
+    refusal_reasons = dict(Counter(str(r["refusal"]) for r in scored if r["refusal"]))
+    warnings_total = sum(len(r["warnings"]) for r in scored)
 
     metric_names = [name.strip() for name in args.ragas_metrics.split(",") if name.strip()]
     judged = judge(samples, metrics=metric_names, settings=settings) if args.ragas else []
@@ -228,6 +234,8 @@ def main() -> int:
         "failures": len(rows) - len(scored),
         "refusals": refusals,
         "refusal_rate": refusals / len(scored) if scored else 0.0,
+        "refusal_reasons": refusal_reasons,
+        "warnings_total": warnings_total,
         "ragas": ragas_overall,
         "ragas_by_category": ragas_by_category,
         "ragas_failures": sum(len(r.errors) for r in judged),
@@ -244,6 +252,8 @@ def main() -> int:
 
     print(f"\n## {args.label}  ({result['questions']} questions, {result['failures']} failed)\n")
     print(f"refusal rate     {result['refusal_rate']:.3f}  ({refusals} of {len(scored)})")
+    print(f"refusal reasons  {refusal_reasons or '-'}")
+    print(f"warnings         {warnings_total}")
     print(f"context chars    p50 {chars_p50:.0f}   p95 {chars_p95:.0f}")
     print(f"prompt tokens    p50 {tokens_p50:.0f}   p95 {tokens_p95:.0f}")
     print(f"latency ms       p50 {latency_p50:.0f}   p95 {latency_p95:.0f}")

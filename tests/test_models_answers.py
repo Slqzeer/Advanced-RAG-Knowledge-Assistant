@@ -84,3 +84,14 @@ def test_an_answer_is_json_serialisable() -> None:
     """This is the shape step 25 serves over HTTP; it has to round-trip now."""
     answer = make_answer()
     assert Answer.model_validate_json(answer.model_dump_json()) == answer
+
+
+def test_refusal_defaults_to_none() -> None:
+    assert make_answer().refusal is None
+
+
+def test_a_rejected_refusal_reason_cannot_be_constructed() -> None:
+    """``weak_retrieval`` was designed and rejected offline at step 22 — the spec
+    has the numbers. A value nothing can produce must not be representable."""
+    with pytest.raises(ValidationError):
+        make_answer(refusal="weak_retrieval")

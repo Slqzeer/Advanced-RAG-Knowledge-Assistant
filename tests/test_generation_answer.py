@@ -353,3 +353,18 @@ def test_a_question_with_no_context_reports_no_contexts() -> None:
 
     assert answer.contexts == []
     assert answer.answer == NO_CONTEXT_ANSWER
+
+
+REFUSAL = "I do not have enough information in the provided context to answer this."
+
+
+def test_an_answer_is_not_a_refusal() -> None:
+    assert ask().refusal is None
+
+
+def test_an_empty_pool_is_refused_as_no_context() -> None:
+    assert ask(retriever=FakeRetriever([])).refusal == "no_context"
+
+
+def test_the_model_declining_is_refused_as_model_declined() -> None:
+    assert ask(llm=FakeLLM(REFUSAL)).refusal == "model_declined"
