@@ -16,7 +16,7 @@ from app.generation.citations import is_refusal, validate_citations
 from app.generation.compress import BatchEmbedder
 from app.generation.compress import compress as compress_chunks
 from app.generation.context import MAX_CONTEXT_CHARS, build_context
-from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE, Completer, complete
+from app.generation.llm import SYSTEM_PROMPTS, USER_TEMPLATE, Completer, complete
 from app.models.answers import Answer, RetrievalStats
 from app.models.chunks import ScoredChunk
 from app.retrieval.search import Filters, search
@@ -98,6 +98,11 @@ def answer_question(
         raise ValueError("question is empty")
 
     settings = settings or get_settings()
+    if settings.prompt_version not in SYSTEM_PROMPTS:
+        # Before retrieval: an unknown version must cost nothing to discover.
+        raise ValueError(
+            f"unknown prompt version {settings.prompt_version!r}; have {sorted(SYSTEM_PROMPTS)}"
+        )
     retriever = retriever or search
     llm = llm or complete
     started = time.perf_counter()
@@ -140,7 +145,9 @@ def answer_question(
         settings=settings,
         embedder=embedder,
     )
-    context, sources, _ = build_context(chunks, max_chars=max_context_chars)
+    context, sources, _ = build_context(
+        chunks, max_chars=max_context_chars, tagged=settings.prompt_version != "v2"
+    )
     # Counted before validation trims ``sources`` to the cited subset: how many
     # chunks reached the model is a retrieval fact, not a citation one.
     used = len(sources)
@@ -153,7 +160,7 @@ def answer_question(
     refusal: Literal["no_context", "model_declined"] | None
     if chunks:
         text, usage = llm(
-            SYSTEM_PROMPT,
+            SYSTEM_PROMPTS[settings.prompt_version],
             USER_TEMPLATE.format(context=context, question=question),
             model=settings.generation_model,
         )

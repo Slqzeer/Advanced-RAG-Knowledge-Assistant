@@ -36,7 +36,7 @@ def _header(index: int, chunk: ScoredChunk) -> str:
 
 
 def build_context(
-    chunks: Sequence[ScoredChunk], *, max_chars: int = MAX_CONTEXT_CHARS
+    chunks: Sequence[ScoredChunk], *, max_chars: int = MAX_CONTEXT_CHARS, tagged: bool = False
 ) -> tuple[str, list[Source], int]:
     """Return ``(context_block, sources, dropped)`` for chunks in rank order.
 
@@ -44,6 +44,11 @@ def build_context(
     dropped — except the first, which is kept even if it alone blows the budget:
     an empty context makes a wrong answer certain, an oversized one merely makes
     a long prompt.
+
+    ``tagged`` wraps each entry in ``<entry n="…">`` tags for prompt v3. A
+    literal ``</entry>`` in chunk text is escaped, or a planted chunk could close
+    its own entry and write outside it. Untagged output is byte-identical to
+    step 21's.
     """
     entries: list[str] = []
     sources: list[Source] = []
@@ -51,6 +56,9 @@ def build_context(
 
     for index, scored in enumerate(chunks, start=1):
         entry = f"{_header(index, scored)}\n{scored.chunk.text}"
+        if tagged:
+            body = scored.chunk.text.replace("</entry>", "<\\/entry>")
+            entry = f'<entry n="{index}">\n{_header(index, scored)}\n{body}\n</entry>'
         cost = len(entry) + (len(SEPARATOR) if entries else 0)
         if entries and total + cost > max_chars:
             break

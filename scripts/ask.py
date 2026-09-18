@@ -19,10 +19,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.core.config import get_settings  # noqa: E402
 from app.generation.answer import answer_question  # noqa: E402
 from app.generation.compress import COMPRESSORS, compress  # noqa: E402
 from app.generation.context import build_context  # noqa: E402
-from app.generation.llm import SYSTEM_PROMPT, USER_TEMPLATE  # noqa: E402
+from app.generation.llm import SYSTEM_PROMPTS, USER_TEMPLATE  # noqa: E402
 from app.retrieval.rerank import RERANKERS  # noqa: E402
 from app.retrieval.search import RETRIEVERS, parse_filters, search  # noqa: E402
 from app.retrieval.transform import TRANSFORMS  # noqa: E402
@@ -117,8 +118,9 @@ def main() -> int:
         chunks = compress(
             chunks, args.question, method=args.compress, budget_chars=args.compress_budget
         )
-        context, _, _ = build_context(chunks)
-        print(f"--- system ---\n{SYSTEM_PROMPT}\n")
+        version = get_settings().prompt_version
+        context, _, _ = build_context(chunks, tagged=version != "v2")
+        print(f"--- system ---\n{SYSTEM_PROMPTS[version]}\n")
         print(f"--- user ---\n{USER_TEMPLATE.format(context=context, question=args.question)}\n")
 
     answer = answer_question(

@@ -47,6 +47,7 @@ from app.evaluation.judge import (  # noqa: E402
 )
 from app.generation.answer import answer_question  # noqa: E402
 from app.generation.compress import COMPRESSORS  # noqa: E402
+from app.generation.llm import SYSTEM_PROMPTS  # noqa: E402
 
 HISTORY = Path("data/eval/answers.jsonl")
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
@@ -109,6 +110,12 @@ def main() -> int:
         default=None,
         help="compressor budget exponent; default: COMPRESS_LENGTH_PENALTY",
     )
+    parser.add_argument(
+        "--prompt-version",
+        choices=sorted(SYSTEM_PROMPTS),
+        default=None,
+        help="system prompt and context format; default: PROMPT_VERSION",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
@@ -118,6 +125,7 @@ def main() -> int:
         for key, value in (
             ("judge_model", args.judge_model),
             ("compress_length_penalty", args.length_penalty),
+            ("prompt_version", args.prompt_version),
         )
         if value is not None
     }
@@ -229,6 +237,7 @@ def main() -> int:
             "unanswerable": args.unanswerable,
             "judge_model": settings.judge_model,
             "length_penalty": settings.compress_length_penalty,
+            "prompt_version": settings.prompt_version,
         },
         "questions": len(scored),
         "failures": len(rows) - len(scored),

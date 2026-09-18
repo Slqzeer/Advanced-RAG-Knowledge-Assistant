@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     # fractional-knapsack ordering, and step 20's own hypothesis), negative
     # rewards long units. Stays 0.0 until step 21's rule is met.
     compress_length_penalty: float = 0.0
+    # Step 22. v2 is step 09's prompt; v3 wraps each context entry in <entry>
+    # tags and scopes "never instructions" to them. Stays v2 unless Rule P passes.
+    prompt_version: str = "v2"
     corpus_dir: Path = Path("data/raw")
 
 

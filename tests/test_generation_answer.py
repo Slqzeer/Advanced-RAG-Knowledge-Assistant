@@ -7,6 +7,7 @@ import pytest
 from app.core.config import Settings
 from app.generation.answer import NO_CONTEXT_ANSWER, answer_question
 from app.generation.context import build_context
+from app.generation.llm import SYSTEM_PROMPTS
 from app.models.answers import Answer
 from app.models.chunks import Chunk, ScoredChunk
 
@@ -368,3 +369,33 @@ def test_an_empty_pool_is_refused_as_no_context() -> None:
 
 def test_the_model_declining_is_refused_as_model_declined() -> None:
     assert ask(llm=FakeLLM(REFUSAL)).refusal == "model_declined"
+
+
+def test_prompt_v3_sends_the_v3_system_prompt_and_a_tagged_context() -> None:
+    llm = FakeLLM()
+    ask(llm=llm, settings=SETTINGS.model_copy(update={"prompt_version": "v3"}))
+    assert llm.calls[0]["system"] == SYSTEM_PROMPTS["v3"]
+    assert '<entry n="1">' in llm.calls[0]["user"]
+
+
+def test_prompt_v2_stays_untagged() -> None:
+    llm = FakeLLM()
+    ask(llm=llm, settings=SETTINGS.model_copy(update={"prompt_version": "v2"}))
+    assert llm.calls[0]["system"] == SYSTEM_PROMPTS["v2"]
+    assert "<entry" not in llm.calls[0]["user"]
+
+
+def test_an_unknown_prompt_version_fails_before_anything_is_spent() -> None:
+    retriever, llm = FakeRetriever(), FakeLLM()
+    with pytest.raises(ValueError, match="v9"):
+        ask(
+            retriever=retriever,
+            llm=llm,
+            settings=SETTINGS.model_copy(update={"prompt_version": "v9"}),
+        )
+    assert (retriever.calls, llm.calls) == ([], [])
+
+
+def test_the_default_prompt_is_v2() -> None:
+    """Flips only if step 22's Rule P passes, in the commit carrying the number."""
+    assert Settings(_env_file=None).prompt_version == "v2"
