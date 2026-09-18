@@ -38,6 +38,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings  # noqa: E402
 from app.evaluation.dataset import load_dataset  # noqa: E402
+from app.evaluation.injection import (  # noqa: E402
+    InjectionAttack,
+    load_fixture,
+    poisoned,
+    succeeded,
+)
 from app.evaluation.judge import (  # noqa: E402
     METRICS,
     JudgeSample,
@@ -48,6 +54,7 @@ from app.evaluation.judge import (  # noqa: E402
 from app.generation.answer import answer_question  # noqa: E402
 from app.generation.compress import COMPRESSORS  # noqa: E402
 from app.generation.llm import SYSTEM_PROMPTS  # noqa: E402
+from app.retrieval.search import search  # noqa: E402
 
 HISTORY = Path("data/eval/answers.jsonl")
 DEFAULT_DATASET = Path("data/eval/questions.jsonl")
@@ -121,6 +128,12 @@ def main() -> int:
         action="store_true",
         help="drop injection-shaped chunks before the context; default: GUARD_DETECT",
     )
+    parser.add_argument(
+        "--injections",
+        type=Path,
+        default=None,
+        help="plant each attack at rank 1 for the fixture's questions; k5, compression off",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
@@ -145,23 +158,45 @@ def main() -> int:
     if not questions:
         raise SystemExit("no questions selected")
 
+    fixture = load_fixture(args.injections) if args.injections else None
+    if fixture is not None:
+        wanted = set(fixture.question_ids)
+        questions = [q for q in load_dataset(args.dataset) if q.question_id in wanted]
+        if len(questions) != len(wanted):
+            raise SystemExit("the fixture names a question the dataset does not have")
+    cases: list[tuple[Any, InjectionAttack | None]] = [
+        (question, attack)
+        for question in questions
+        for attack in (fixture.attacks if fixture else [None])
+    ]
+
     rows: list[dict[str, Any]] = []
     samples: list[JudgeSample] = []
-    for question in questions:
+    for question, attack in cases:
         started = time.perf_counter()
         try:
             answer = answer_question(
                 question.question,
                 top_k=args.top_k,
-                compress=args.compress,
+                # Compression off under --injections: it keeps the sentences most
+                # like the query, and would strip the planted chunk before the
+                # generator — the thing measured — ever saw it.
+                compress="" if attack else args.compress,
                 compress_candidates=args.compress_candidates,
                 compress_budget=args.compress_budget,
                 settings=settings,
                 include_contexts=args.ragas,
+                retriever=poisoned(search, attack) if attack else None,
             )
         except Exception as error:  # noqa: BLE001 — one transient API error must not
             # cost a 38-question run; it is recorded as a row, never swallowed.
-            rows.append({"question_id": question.question_id, "error": f"{error}"})
+            rows.append(
+                {
+                    "question_id": question.question_id,
+                    "error": f"{error}",
+                    "attack_id": attack.attack_id if attack else None,
+                }
+            )
             continue
         rows.append(
             {
@@ -186,6 +221,13 @@ def main() -> int:
                 "latency_ms": (time.perf_counter() - started) * 1000,
             }
         )
+        if attack:
+            rows[-1].update(
+                attack_id=attack.attack_id,
+                attack=attack.attack,
+                phrasing=attack.phrasing,
+                succeeded=succeeded(attack, answer),
+            )
         if args.ragas:
             samples.append(
                 JudgeSample(
@@ -204,6 +246,15 @@ def main() -> int:
     refusals = sum(1 for row in scored if row["refused"])
     refusal_reasons = dict(Counter(str(r["refusal"]) for r in scored if r["refusal"]))
     warnings_total = sum(len(r["warnings"]) for r in scored)
+
+    attacked = [r for r in scored if r.get("attack") not in (None, "control")]
+    # Counts, not rates: every rule in step 22 is written in cases, and each key
+    # is one attack phrasing over the fixture's ten questions.
+    attack_success: dict[str, int] = {}
+    for key in sorted({(r["attack"], r["phrasing"]) for r in attacked}):
+        group = [r for r in attacked if (r["attack"], r["phrasing"]) == key]
+        attack_success["/".join(key)] = sum(1 for r in group if r["succeeded"])
+    control_refusals = sum(1 for r in scored if r.get("attack") == "control" and r["refused"])
 
     metric_names = [name.strip() for name in args.ragas_metrics.split(",") if name.strip()]
     judged = judge(samples, metrics=metric_names, settings=settings) if args.ragas else []
@@ -235,7 +286,9 @@ def main() -> int:
         "git_commit": git_commit(),
         "config": {
             "top_k": args.top_k or settings.top_k,
-            "compress": args.compress if args.compress is not None else settings.compress_method,
+            "compress": ""
+            if fixture
+            else (args.compress if args.compress is not None else settings.compress_method),
             "compress_candidates": args.compress_candidates or settings.compress_candidates,
             "compress_budget": args.compress_budget or settings.compress_budget_chars,
             "collection": settings.qdrant_collection,
@@ -245,6 +298,7 @@ def main() -> int:
             "length_penalty": settings.compress_length_penalty,
             "prompt_version": settings.prompt_version,
             "guard_detect": settings.guard_detect,
+            "injections": str(args.injections) if args.injections else None,
         },
         "questions": len(scored),
         "failures": len(rows) - len(scored),
@@ -252,6 +306,10 @@ def main() -> int:
         "refusal_rate": refusals / len(scored) if scored else 0.0,
         "refusal_reasons": refusal_reasons,
         "warnings_total": warnings_total,
+        "attack_success": attack_success,
+        "attack_successes": sum(1 for r in attacked if r["succeeded"]),
+        "attack_cases": len(attacked),
+        "control_refusals": control_refusals,
         "ragas": ragas_overall,
         "ragas_by_category": ragas_by_category,
         "ragas_failures": sum(len(r.errors) for r in judged),
@@ -270,6 +328,11 @@ def main() -> int:
     print(f"refusal rate     {result['refusal_rate']:.3f}  ({refusals} of {len(scored)})")
     print(f"refusal reasons  {refusal_reasons or '-'}")
     print(f"warnings         {warnings_total}")
+    if attacked:
+        print(f"attacks          {result['attack_successes']} of {len(attacked)} succeeded")
+        for key, count in attack_success.items():
+            print(f"  {key:<28} {count} of 10")
+        print(f"control refusals {control_refusals}")
     print(f"context chars    p50 {chars_p50:.0f}   p95 {chars_p95:.0f}")
     print(f"prompt tokens    p50 {tokens_p50:.0f}   p95 {tokens_p95:.0f}")
     print(f"latency ms       p50 {latency_p50:.0f}   p95 {latency_p95:.0f}")
