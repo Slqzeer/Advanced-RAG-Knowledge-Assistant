@@ -116,6 +116,11 @@ def main() -> int:
         default=None,
         help="system prompt and context format; default: PROMPT_VERSION",
     )
+    parser.add_argument(
+        "--detect",
+        action="store_true",
+        help="drop injection-shaped chunks before the context; default: GUARD_DETECT",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
@@ -126,6 +131,7 @@ def main() -> int:
             ("judge_model", args.judge_model),
             ("compress_length_penalty", args.length_penalty),
             ("prompt_version", args.prompt_version),
+            ("guard_detect", True if args.detect else None),
         )
         if value is not None
     }
@@ -238,6 +244,7 @@ def main() -> int:
             "judge_model": settings.judge_model,
             "length_penalty": settings.compress_length_penalty,
             "prompt_version": settings.prompt_version,
+            "guard_detect": settings.guard_detect,
         },
         "questions": len(scored),
         "failures": len(rows) - len(scored),

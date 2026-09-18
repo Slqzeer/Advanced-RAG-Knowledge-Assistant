@@ -16,6 +16,7 @@ from app.generation.citations import is_refusal, validate_citations
 from app.generation.compress import BatchEmbedder
 from app.generation.compress import compress as compress_chunks
 from app.generation.context import MAX_CONTEXT_CHARS, build_context
+from app.generation.guard import detect_injection
 from app.generation.llm import SYSTEM_PROMPTS, USER_TEMPLATE, Completer, complete
 from app.models.answers import Answer, RetrievalStats
 from app.models.chunks import ScoredChunk
@@ -145,6 +146,11 @@ def answer_question(
         settings=settings,
         embedder=embedder,
     )
+    guard_warnings: list[str] = []
+    if settings.guard_detect:
+        # After compression, which rewrites chunk text: scanning before it would
+        # be scanning something the model never receives.
+        chunks, guard_warnings = detect_injection(chunks)
     context, sources, _ = build_context(
         chunks, max_chars=max_context_chars, tagged=settings.prompt_version != "v2"
     )
@@ -176,6 +182,8 @@ def answer_question(
         # a refusal with no context to cite is the right answer, not a warning.
         text, usage, sources = NO_CONTEXT_ANSWER, {}, []
         refusal = "no_context"
+
+    warnings = guard_warnings + warnings
 
     return Answer(
         answer=text,

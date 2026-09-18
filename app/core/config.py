@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # Step 22. v2 is step 09's prompt; v3 wraps each context entry in <entry>
     # tags and scopes "never instructions" to them. Stays v2 unless Rule P passes.
     prompt_version: str = "v2"
+    # Step 22. Drop chunks matching guard.INJECTION_PATTERNS before the context
+    # is built. Stays off unless Rule D passes.
+    guard_detect: bool = False
     corpus_dir: Path = Path("data/raw")
 
 
