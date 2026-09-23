@@ -112,6 +112,12 @@ def main() -> int:
     )
     parser.add_argument("--judge-model", default=None, help="default: JUDGE_MODEL")
     parser.add_argument(
+        "--generation-model",
+        default=None,
+        help="the generator for this arm; default: GENERATION_MODEL. A model id "
+        "from another provider needs GENERATION_BASE_URL set as well",
+    )
+    parser.add_argument(
         "--length-penalty",
         type=float,
         default=None,
@@ -142,6 +148,7 @@ def main() -> int:
         key: value
         for key, value in (
             ("judge_model", args.judge_model),
+            ("generation_model", args.generation_model),
             ("compress_length_penalty", args.length_penalty),
             ("prompt_version", args.prompt_version),
             ("guard_detect", True if args.detect else None),
