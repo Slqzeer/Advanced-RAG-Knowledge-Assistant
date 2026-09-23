@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_cache_path: Path = Path("data/processed/embeddings.sqlite")
     generation_model: str = "gpt-4o-mini"
+    # Generation only, and only when set: an OpenAI-wire-compatible gateway
+    # (OpenRouter, a local server) for the generator, leaving embeddings on
+    # OpenAI where their cache was built. Empty is today's behaviour exactly.
+    generation_base_url: str = ""
+    # The gateway's own credential. Falls back to OPENAI_API_KEY when unset, so
+    # a base_url pointing at an OpenAI-compatible proxy of OpenAI still works.
+    generation_api_key: str | None = None
     # Step 21's judge, deliberately not generation_model: a model grading its own
     # output rates it higher than a third party's, and the absolute faithfulness
     # number has to survive steps 22-25 changing the generator.

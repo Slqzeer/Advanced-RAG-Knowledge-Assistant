@@ -197,3 +197,16 @@ def test_embed_query_shares_the_cache_with_documents(cache: EmbeddingCache) -> N
     client = FakeClient()
     assert embed_query("alpha", cache=cache, client=client) == fake_vector("alpha")
     assert client.batches == []
+
+
+def test_the_generation_gateway_overrides_do_not_touch_embeddings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only `generation.llm.complete` passes these. The embedding cache is keyed
+    by model name alone, so a second provider answering to the same model name
+    must never reach it."""
+    monkeypatch.setenv("OPENAI_API_KEY", "not-a-real-key")
+    routed = build_client(base_url="https://openrouter.ai/api/v1", api_key="gateway-key")
+    assert str(routed.base_url).rstrip("/") == "https://openrouter.ai/api/v1"
+    assert routed.api_key == "gateway-key"
+    assert "openrouter" not in str(build_client().base_url)

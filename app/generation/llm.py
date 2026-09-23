@@ -9,6 +9,7 @@ never sees a client.
 from collections.abc import Callable
 from typing import Any
 
+from app.core.config import get_settings
 from app.ingestion.embed import build_client
 
 # The shape every caller of `complete` may substitute: the tests inject one, and
@@ -96,7 +97,11 @@ def complete(
     """
     # Same factory as the embeddings: one credential, and one place the SDK's
     # retry policy (max_retries=5, exponential, 429 and 5xx) is configured.
-    client = client or build_client()
+    # GENERATION_BASE_URL redirects this call and nothing else — see config.py.
+    settings = get_settings()
+    client = client or build_client(
+        base_url=settings.generation_base_url, api_key=settings.generation_api_key
+    )
     response = client.chat.completions.create(
         model=model,
         temperature=temperature,

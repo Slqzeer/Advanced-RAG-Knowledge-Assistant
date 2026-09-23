@@ -84,10 +84,20 @@ class EmbeddingCache:
             )
 
 
-def build_client() -> OpenAI:
+def build_client(*, base_url: str = "", api_key: str | None = None) -> OpenAI:
     """The provider client, keyed from the settings — which read ``.env`` — and
-    falling back to ``OPENAI_API_KEY`` in the environment when there is none."""
-    return OpenAI(api_key=get_settings().openai_api_key, max_retries=MAX_RETRIES)
+    falling back to ``OPENAI_API_KEY`` in the environment when there is none.
+
+    ``base_url`` and ``api_key`` exist for one caller: ``generation.llm.complete``
+    pointing at an OpenAI-wire-compatible gateway. Embeddings never pass them —
+    the sqlite cache is keyed by model name alone, so two providers answering to
+    ``text-embedding-3-small`` would silently share one set of vectors.
+    """
+    return OpenAI(
+        api_key=api_key or get_settings().openai_api_key,
+        base_url=base_url or None,
+        max_retries=MAX_RETRIES,
+    )
 
 
 def embed_texts(
