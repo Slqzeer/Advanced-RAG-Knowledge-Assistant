@@ -176,6 +176,43 @@ def test_importing_the_judge_turns_off_ragas_usage_tracking() -> None:
     assert do_not_track()
 
 
+def test_the_judge_follows_the_generation_gateway_and_asks_for_fresh_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The OpenAI key is dead; the generator already reaches its model through
+    # GENERATION_BASE_URL. The judge rides the same gateway, and a cached verdict
+    # replayed from an earlier arm would compare an arm with itself.
+    import app.evaluation.judge as judge_module
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(judge_module, "AsyncOpenAI", lambda **kw: seen.update(kw) or "client")
+    monkeypatch.setattr(judge_module, "llm_factory", lambda model, client: (model, client))
+    monkeypatch.setattr(
+        judge_module, "embedding_factory", lambda provider, model, client: (model, client)
+    )
+    settings = Settings(
+        _env_file=None,
+        judge_model="judge-x",
+        judge_embedding_model="embed-x",
+        generation_base_url="http://gateway/v1",
+        generation_api_key="gw-key",
+    )
+    captured: dict[str, Any] = {}
+    monkeypatch.setitem(
+        judge_module.METRICS, "faithfulness", lambda llm, emb: captured.update(llm=llm, emb=emb)
+    )
+
+    judge_module._build_scorers(["faithfulness"], settings)
+
+    assert seen["base_url"] == "http://gateway/v1"
+    assert seen["api_key"] == "gw-key"
+    assert seen["default_headers"] == {
+        "X-OmniRoute-No-Cache": "true",
+        "X-OmniRoute-No-Memory": "true",
+    }
+    assert captured == {"llm": ("judge-x", "client"), "emb": ("embed-x", "client")}
+
+
 def test_mean_scores_averages_only_the_rows_that_scored() -> None:
     samples = [sample("q001", "first?"), sample("q002", "second?"), sample("q003", "third?")]
     scorer = FakeScorer({"first?": 1.0, "third?": 0.0}, raises_on={"second?"})

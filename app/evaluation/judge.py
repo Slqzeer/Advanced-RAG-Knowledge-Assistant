@@ -44,6 +44,7 @@ from ragas.metrics.collections import (
 )
 
 from app.core.config import Settings, get_settings
+from app.generation.llm import FRESH_GENERATION_HEADERS
 
 # A gpt-4o key at 30k tokens/min, not CONCURRENCY, sets how long an arm takes
 # (~14 min). At four at a time with the SDK's default 2 retries, ragas-k5 lost 97
@@ -159,10 +160,20 @@ METRICS["context_precision"] = _context_precision
 
 
 def _build_scorers(names: Sequence[str], settings: Settings) -> dict[str, Scorer]:
-    """One client, one judge, one embedder, shared by every metric in the run."""
-    client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=MAX_RETRIES)
+    """One client, one judge, one embedder, shared by every metric in the run.
+
+    Through the generator's gateway when GENERATION_BASE_URL is set, since the
+    OpenAI key behind the first arms expired; empty keeps OpenAI direct. Fresh
+    headers for the reason ``complete`` sends them: a replayed verdict is not one.
+    """
+    client = AsyncOpenAI(
+        api_key=settings.generation_api_key or settings.openai_api_key,
+        base_url=settings.generation_base_url or None,
+        max_retries=MAX_RETRIES,
+        default_headers=FRESH_GENERATION_HEADERS,
+    )
     llm = llm_factory(settings.judge_model, client=client)
-    embeddings = embedding_factory("openai", model=settings.embedding_model, client=client)
+    embeddings = embedding_factory("openai", model=settings.judge_embedding_model, client=client)
     return {name: METRICS[name](llm, embeddings) for name in names}
 
 

@@ -302,6 +302,7 @@ def main() -> int:
             "generation_model": settings.generation_model,
             "unanswerable": args.unanswerable,
             "judge_model": settings.judge_model,
+            "judge_embedding_model": settings.judge_embedding_model,
             "length_penalty": settings.compress_length_penalty,
             "prompt_version": settings.prompt_version,
             "guard_detect": settings.guard_detect,
