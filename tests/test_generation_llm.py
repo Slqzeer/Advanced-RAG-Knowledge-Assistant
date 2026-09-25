@@ -17,3 +17,21 @@ def test_complete_bounds_every_call_with_a_timeout() -> None:
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     assert complete("s", "u", model="m", client=client)[0] == "pong"
     assert seen["timeout"] == GENERATION_TIMEOUT_S
+
+
+def test_complete_asks_the_gateway_for_a_fresh_generation() -> None:
+    """OmniRoute replayed 80 of inj-v2-detect's 90 answers from its cache, so the
+    arm compared inj-v2 with itself. Every call must reach the model."""
+    seen: dict[str, Any] = {}
+
+    def create(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        message = SimpleNamespace(content="pong")
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None)
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    complete("s", "u", model="m", client=client)
+    assert seen["extra_headers"] == {
+        "X-OmniRoute-No-Cache": "true",
+        "X-OmniRoute-No-Memory": "true",
+    }

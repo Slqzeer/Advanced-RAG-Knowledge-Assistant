@@ -18,6 +18,12 @@ from app.ingestion.embed import build_client
 # 6-20 s through OmniRoute.
 GENERATION_TIMEOUT_S = 60.0
 
+# OmniRoute caches responses by default, and a replay is not a measurement: it
+# served 80 of inj-v2-detect's 90 answers from inj-v2's, so step 22's Rule D
+# clause 2 compared a run with itself. No-memory keeps the gateway from adding
+# its own context to the prompt. Other endpoints ignore unknown headers.
+FRESH_GENERATION_HEADERS = {"X-OmniRoute-No-Cache": "true", "X-OmniRoute-No-Memory": "true"}
+
 # The shape every caller of `complete` may substitute: the tests inject one, and
 # so do `answer_question` and `expand`. Defined here, beside the only real
 # implementation, so the three call sites cannot drift into three aliases.
@@ -112,6 +118,7 @@ def complete(
         model=model,
         temperature=temperature,
         timeout=GENERATION_TIMEOUT_S,
+        extra_headers=FRESH_GENERATION_HEADERS,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
