@@ -33,9 +33,10 @@ from typing import Any
 # CALL_TIMEOUT_S. setdefault, so an explicit opt-in still wins.
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
 
+from fastembed import TextEmbedding
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
-from ragas.embeddings.base import embedding_factory
+from ragas.embeddings.base import BaseRagasEmbedding
 from ragas.llms import llm_factory
 from ragas.metrics.collections import (
     AnswerRelevancy,
@@ -111,6 +112,28 @@ class JudgeScores(BaseModel):
     errors: dict[str, str] = Field(default_factory=dict)
 
 
+class LocalEmbedding(BaseRagasEmbedding):
+    """AnswerRelevancy's embedder, on this machine rather than behind the gateway.
+
+    No gateway model served embeddings when step 21 resumed (GitHub's upstream
+    failed, NVIDIA's were retired), and the OpenAI key is dead. Local is also the
+    better instrument for a repeated control: same text, same vector, no spend.
+    The questions are English, so an English model is enough.
+    """
+
+    def __init__(self, model: str) -> None:
+        super().__init__()
+        self._model = TextEmbedding(model_name=model)
+
+    def embed_text(self, text: str, **kwargs: Any) -> list[float]:
+        return [float(x) for x in next(iter(self._model.embed([text])))]
+
+    async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
+        # ponytail: blocks the event loop for a few ms per text; offload to a
+        # thread if the judge ever embeds long passages.
+        return self.embed_text(text)
+
+
 def _faithfulness(llm: Any, embeddings: Any) -> Scorer:
     """Is every claim in the answer supported by the contexts? Needs no reference."""
     metric = Faithfulness(llm=llm)
@@ -173,7 +196,7 @@ def _build_scorers(names: Sequence[str], settings: Settings) -> dict[str, Scorer
         default_headers=FRESH_GENERATION_HEADERS,
     )
     llm = llm_factory(settings.judge_model, client=client)
-    embeddings = embedding_factory("openai", model=settings.judge_embedding_model, client=client)
+    embeddings = LocalEmbedding(settings.judge_embedding_model)
     return {name: METRICS[name](llm, embeddings) for name in names}
 
 

@@ -40,10 +40,10 @@ class Settings(BaseSettings):
     # output rates it higher than a third party's, and the absolute faithfulness
     # number has to survive steps 22-25 changing the generator.
     judge_model: str = "gpt-4o"
-    # AnswerRelevancy's cosine between generated and original questions. Its own
-    # setting because it rides the judge's gateway, not the embedding cache, and
-    # the gateway may not serve EMBEDDING_MODEL. Constant across the arms it compares.
-    judge_embedding_model: str = "text-embedding-3-small"
+    # AnswerRelevancy's cosine between generated and original questions, run
+    # locally by fastembed: no gateway model serves embeddings. Constant across
+    # every arm it compares; changing it re-baselines relevancy.
+    judge_embedding_model: str = "BAAI/bge-small-en-v1.5"
     # Step 12 compared four: sentence won on Recall@5 (0.776 vs 0.713 recursive),
     # and 1000/200 was the peak of both the size and the overlap sweep.
     chunk_strategy: str = "sentence"

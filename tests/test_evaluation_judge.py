@@ -187,9 +187,7 @@ def test_the_judge_follows_the_generation_gateway_and_asks_for_fresh_calls(
     seen: dict[str, Any] = {}
     monkeypatch.setattr(judge_module, "AsyncOpenAI", lambda **kw: seen.update(kw) or "client")
     monkeypatch.setattr(judge_module, "llm_factory", lambda model, client: (model, client))
-    monkeypatch.setattr(
-        judge_module, "embedding_factory", lambda provider, model, client: (model, client)
-    )
+    monkeypatch.setattr(judge_module, "LocalEmbedding", lambda model: ("local", model))
     settings = Settings(
         _env_file=None,
         judge_model="judge-x",
@@ -210,7 +208,31 @@ def test_the_judge_follows_the_generation_gateway_and_asks_for_fresh_calls(
         "X-OmniRoute-No-Cache": "true",
         "X-OmniRoute-No-Memory": "true",
     }
-    assert captured == {"llm": ("judge-x", "client"), "emb": ("embed-x", "client")}
+    assert captured == {"llm": ("judge-x", "client"), "emb": ("local", "embed-x")}
+
+
+@pytest.mark.requires_model
+def test_the_local_embedder_ranks_a_paraphrase_above_an_unrelated_question() -> None:
+    # No gateway model serves embeddings, so relevancy's cosine runs locally.
+    # What AnswerRelevancy needs from it is exactly this ordering.
+    from app.evaluation.judge import LocalEmbedding
+
+    embedder = LocalEmbedding("BAAI/bge-small-en-v1.5")
+    q, para, other = (
+        embedder.embed_text(t)
+        for t in (
+            "How do I write a test that calls my endpoints?",
+            "How can I test my API routes?",
+            "How do I cook rice?",
+        )
+    )
+
+    def cos(a: list[float], b: list[float]) -> float:
+        return sum(x * y for x, y in zip(a, b, strict=True)) / (
+            sum(x * x for x in a) ** 0.5 * sum(y * y for y in b) ** 0.5
+        )
+
+    assert cos(q, para) > cos(q, other) + 0.1
 
 
 def test_mean_scores_averages_only_the_rows_that_scored() -> None:
