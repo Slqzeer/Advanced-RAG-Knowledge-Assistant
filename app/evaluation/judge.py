@@ -34,7 +34,7 @@ from typing import Any
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
 
 from fastembed import TextEmbedding
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 from pydantic import BaseModel, ConfigDict, Field
 from ragas.embeddings.base import BaseRagasEmbedding
 from ragas.llms import llm_factory
@@ -45,7 +45,9 @@ from ragas.metrics.collections import (
 )
 
 from app.core.config import Settings, get_settings
-from app.generation.llm import FRESH_GENERATION_HEADERS
+
+# The generator's cooldown policy, shared: a judge call trips the same limit.
+from app.generation.llm import FRESH_GENERATION_HEADERS, RATE_LIMIT_WAIT_S, RATE_LIMIT_WAITS
 
 # A gpt-4o key at 30k tokens/min, not CONCURRENCY, sets how long an arm takes
 # (~14 min). At four at a time with the SDK's default 2 retries, ragas-k5 lost 97
@@ -200,26 +202,50 @@ def _build_scorers(names: Sequence[str], settings: Settings) -> dict[str, Scorer
     return {name: METRICS[name](llm, embeddings) for name in names}
 
 
+def _is_rate_limit(error: BaseException | None) -> bool:
+    """True if a 429 is anywhere in the chain: instructor re-raises it wrapped."""
+    while error is not None:
+        if isinstance(error, RateLimitError):
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
+async def _call_waiting_out_rate_limits(
+    scorer: Scorer, sample: JudgeSample, gate: asyncio.Semaphore
+) -> float:
+    waits = 0
+    while True:
+        try:
+            async with gate:
+                return await asyncio.wait_for(scorer(sample), timeout=CALL_TIMEOUT_S)
+        except Exception as error:
+            if waits == RATE_LIMIT_WAITS or not _is_rate_limit(error):
+                raise
+        waits += 1
+        # Outside the gate: a sample sitting out a cooldown holds no slot.
+        await asyncio.sleep(RATE_LIMIT_WAIT_S)
+
+
 async def _score_one(
     sample: JudgeSample, scorers: Mapping[str, Scorer], gate: asyncio.Semaphore
 ) -> JudgeScores:
     scores: dict[str, float] = {}
     errors: dict[str, str] = {}
     for name, scorer in scorers.items():
-        async with gate:
-            try:
-                value = await asyncio.wait_for(scorer(sample), timeout=CALL_TIMEOUT_S)
-            except TimeoutError:
-                # asyncio.TimeoutError is TimeoutError as of 3.11, and is itself an
-                # Exception subclass — the except below would catch it too, but its
-                # message would just say "TimeoutError: " with nothing to name the
-                # limit that tripped.
-                errors[name] = f"timeout: exceeded {CALL_TIMEOUT_S}s call limit"
-                continue
-            except Exception as error:  # noqa: BLE001 — one transient API error must
-                # not cost a 38-question run; it is recorded as a row, never swallowed.
-                errors[name] = f"{type(error).__name__}: {error}"
-                continue
+        try:
+            value = await _call_waiting_out_rate_limits(scorer, sample, gate)
+        except TimeoutError:
+            # asyncio.TimeoutError is TimeoutError as of 3.11, and is itself an
+            # Exception subclass — the except below would catch it too, but its
+            # message would just say "TimeoutError: " with nothing to name the
+            # limit that tripped.
+            errors[name] = f"timeout: exceeded {CALL_TIMEOUT_S}s call limit"
+            continue
+        except Exception as error:  # noqa: BLE001 — one transient API error must
+            # not cost a 38-question run; it is recorded as a row, never swallowed.
+            errors[name] = f"{type(error).__name__}: {error}"
+            continue
         if math.isnan(value):
             # ragas returns NaN when its own parse of a judge response fails.
             # Averaged in, one NaN poisons the arm and the row still looks like

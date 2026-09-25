@@ -133,6 +133,38 @@ def test_a_stuck_call_times_out_and_the_other_samples_still_score(
     assert results[1].scores["faithfulness"] == 0.9
 
 
+def test_a_rate_limited_call_waits_out_the_cooldown_instead_of_losing_the_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # OmniRoute cools a credential for ~160 s, longer than the SDK's backoff.
+    # A lost call is a biased row (the long-context samples go first), so the
+    # judge waits and retries. instructor wraps the 429, hence the chain.
+    import httpx
+    from openai import RateLimitError
+
+    import app.evaluation.judge as judge_module
+
+    monkeypatch.setattr(judge_module, "RATE_LIMIT_WAIT_S", 0.0)
+    calls = 0
+
+    async def cooled_once(sample: JudgeSample) -> float:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            response = httpx.Response(429, request=httpx.Request("POST", "http://gw"))
+            cause = RateLimitError("cooling down", response=response, body=None)
+            raise RuntimeError("Max retries exceeded") from cause
+        return 0.5
+
+    results = judge(
+        [sample("q001", "first?")], settings=SETTINGS, scorers={"relevancy": cooled_once}
+    )
+
+    assert results[0].scores == {"relevancy": 0.5}
+    assert results[0].errors == {}
+    assert calls == 2
+
+
 def test_a_nan_is_recorded_as_an_error_not_as_a_score() -> None:
     """ragas returns NaN when its own internal parse fails. Averaged in, one NaN
     poisons the whole arm and the row looks like a measurement."""

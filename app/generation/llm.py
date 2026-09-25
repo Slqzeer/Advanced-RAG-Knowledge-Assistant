@@ -6,8 +6,11 @@ nothing else in the pipeline notices. That is the whole reason ``answer.py``
 never sees a client.
 """
 
+import time
 from collections.abc import Callable
 from typing import Any
+
+from openai import RateLimitError
 
 from app.core.config import get_settings
 from app.ingestion.embed import build_client
@@ -23,6 +26,13 @@ GENERATION_TIMEOUT_S = 60.0
 # clause 2 compared a run with itself. No-memory keeps the gateway from adding
 # its own context to the prompt. Other endpoints ignore unknown headers.
 FRESH_GENERATION_HEADERS = {"X-OmniRoute-No-Cache": "true", "X-OmniRoute-No-Memory": "true"}
+
+# OmniRoute answers a burst with "all credentials cooling down" for up to ~160 s.
+# The SDK's retries back off at most 8 s each and are spent long before that, so
+# a 429 that survives them is waited out. Losing it instead biases a row: step
+# 21's first GitHub arm lost 37 of 38 questions. The judge waits the same way.
+RATE_LIMIT_WAIT_S = 170.0
+RATE_LIMIT_WAITS = 5
 
 # The shape every caller of `complete` may substitute: the tests inject one, and
 # so do `answer_question` and `expand`. Defined here, beside the only real
@@ -114,16 +124,25 @@ def complete(
     client = client or build_client(
         base_url=settings.generation_base_url, api_key=settings.generation_api_key
     )
-    response = client.chat.completions.create(
-        model=model,
-        temperature=temperature,
-        timeout=GENERATION_TIMEOUT_S,
-        extra_headers=FRESH_GENERATION_HEADERS,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    )
+    waits = 0
+    while True:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                timeout=GENERATION_TIMEOUT_S,
+                extra_headers=FRESH_GENERATION_HEADERS,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+            break
+        except RateLimitError:
+            if waits == RATE_LIMIT_WAITS:
+                raise
+            waits += 1
+            time.sleep(RATE_LIMIT_WAIT_S)
     # content is Optional in the SDK: a refusal or a length stop can return None,
     # and "" reaching the Answer model fails there loudly rather than here quietly.
     text = response.choices[0].message.content or ""
