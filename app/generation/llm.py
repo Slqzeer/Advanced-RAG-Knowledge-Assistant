@@ -12,6 +12,12 @@ from typing import Any
 from app.core.config import get_settings
 from app.ingestion.embed import build_client
 
+# Per attempt, not per call: the SDK retries a timeout like a 5xx, so the worst
+# case is (max_retries + 1) × this. The SDK default is 600 s, which let one hung
+# gateway request hold step 22's inj-v2 arm for three hours. A healthy call is
+# 6-20 s through OmniRoute.
+GENERATION_TIMEOUT_S = 60.0
+
 # The shape every caller of `complete` may substitute: the tests inject one, and
 # so do `answer_question` and `expand`. Defined here, beside the only real
 # implementation, so the three call sites cannot drift into three aliases.
@@ -105,6 +111,7 @@ def complete(
     response = client.chat.completions.create(
         model=model,
         temperature=temperature,
+        timeout=GENERATION_TIMEOUT_S,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
