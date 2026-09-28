@@ -62,3 +62,27 @@ def test_complete_waits_out_a_gateway_cooldown_instead_of_losing_the_question(
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     assert complete("s", "u", model="m", client=client)[0] == "pong"
     assert calls == 2
+
+
+def _cooled(body: Any) -> Any:
+    import httpx
+    from openai import RateLimitError
+
+    response = httpx.Response(429, request=httpx.Request("POST", "http://gw"))
+    return RateLimitError("cooling down", response=response, body=body)
+
+
+def test_a_cooldown_is_waited_for_as_long_as_the_gateway_says() -> None:
+    """Retrying inside OmniRoute's cooldown extends it: step 21's grew to 1 046 s."""
+    from app.generation.llm import COOLDOWN_MARGIN_S, cooldown_s
+
+    assert cooldown_s(_cooled({"error": {"reset_seconds": 160}})) == 160 + COOLDOWN_MARGIN_S
+    assert cooldown_s(_cooled({"reset_seconds": 58})) == 58 + COOLDOWN_MARGIN_S
+
+
+def test_a_cooldown_without_a_reset_falls_back_and_one_past_the_cap_is_not_waited() -> None:
+    from app.generation.llm import RATE_LIMIT_WAIT_S, cooldown_s
+
+    assert cooldown_s(_cooled(None)) == RATE_LIMIT_WAIT_S
+    # Antigravity's "reset after 133h" is an exhausted quota, not a cooldown.
+    assert cooldown_s(_cooled({"error": {"reset_seconds": 133 * 3600}})) is None

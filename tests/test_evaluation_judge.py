@@ -144,7 +144,7 @@ def test_a_rate_limited_call_waits_out_the_cooldown_instead_of_losing_the_score(
 
     import app.evaluation.judge as judge_module
 
-    monkeypatch.setattr(judge_module, "RATE_LIMIT_WAIT_S", 0.0)
+    monkeypatch.setattr(judge_module, "cooldown_s", lambda error: 0.0)
     calls = 0
 
     async def cooled_once(sample: JudgeSample) -> float:

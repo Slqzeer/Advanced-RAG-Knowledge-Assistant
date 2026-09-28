@@ -33,6 +33,23 @@ FRESH_GENERATION_HEADERS = {"X-OmniRoute-No-Cache": "true", "X-OmniRoute-No-Memo
 # 21's first GitHub arm lost 37 of 38 questions. The judge waits the same way.
 RATE_LIMIT_WAIT_S = 170.0
 RATE_LIMIT_WAITS = 5
+# OmniRoute says how long: `reset_seconds`. Retrying before it ends extends the
+# cooldown (step 21 watched one grow to 1 046 s), so wait exactly that, plus a
+# margin. Past the cap it is an exhausted quota, not a cooldown ("reset after
+# 133h"), and waiting would only stall the arm.
+COOLDOWN_MARGIN_S = 5.0
+COOLDOWN_CAP_S = 1800.0
+
+
+def cooldown_s(error: RateLimitError) -> float | None:
+    """Seconds to wait before retrying, or None when waiting is pointless."""
+    body = error.body if isinstance(error.body, dict) else {}
+    inner = body.get("error")
+    reset = (inner if isinstance(inner, dict) else body).get("reset_seconds")
+    if not isinstance(reset, int | float):
+        return RATE_LIMIT_WAIT_S
+    return None if reset > COOLDOWN_CAP_S else reset + COOLDOWN_MARGIN_S
+
 
 # The shape every caller of `complete` may substitute: the tests inject one, and
 # so do `answer_question` and `expand`. Defined here, beside the only real
@@ -138,11 +155,12 @@ def complete(
                 ],
             )
             break
-        except RateLimitError:
-            if waits == RATE_LIMIT_WAITS:
+        except RateLimitError as error:
+            wait = cooldown_s(error)
+            if waits == RATE_LIMIT_WAITS or wait is None:
                 raise
             waits += 1
-            time.sleep(RATE_LIMIT_WAIT_S)
+            time.sleep(wait)
     # content is Optional in the SDK: a refusal or a length stop can return None,
     # and "" reaching the Answer model fails there loudly rather than here quietly.
     text = response.choices[0].message.content or ""

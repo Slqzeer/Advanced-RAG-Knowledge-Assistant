@@ -47,14 +47,16 @@ from ragas.metrics.collections import (
 from app.core.config import Settings, get_settings
 
 # The generator's cooldown policy, shared: a judge call trips the same limit.
-from app.generation.llm import FRESH_GENERATION_HEADERS, RATE_LIMIT_WAIT_S, RATE_LIMIT_WAITS
+from app.generation.llm import FRESH_GENERATION_HEADERS, RATE_LIMIT_WAITS, cooldown_s
 
 # A gpt-4o key at 30k tokens/min, not CONCURRENCY, sets how long an arm takes
 # (~14 min). At four at a time with the SDK's default 2 retries, ragas-k5 lost 97
 # of 114 judge calls to 429s; with 10 retries it still lost 15, and the ones lost
 # are the long-context samples, so the mean is biased, not just thinner. Two at a
 # time wastes less of the budget on bursts that were always going to be refused.
-CONCURRENCY = 2
+# One at a time since the GitHub gpt-4o judge: at two, its cooldown escalated to
+# 17 minutes and cost every relevancy score in ragas-k5.
+CONCURRENCY = 1
 MAX_RETRIES = 10
 
 # Generous: a call takes 3-7s. (An earlier "p95 of about 78s" was the usage-tracking
@@ -202,13 +204,13 @@ def _build_scorers(names: Sequence[str], settings: Settings) -> dict[str, Scorer
     return {name: METRICS[name](llm, embeddings) for name in names}
 
 
-def _is_rate_limit(error: BaseException | None) -> bool:
-    """True if a 429 is anywhere in the chain: instructor re-raises it wrapped."""
+def _rate_limit_in(error: BaseException | None) -> RateLimitError | None:
+    """The 429 anywhere in the chain: instructor re-raises it wrapped."""
     while error is not None:
         if isinstance(error, RateLimitError):
-            return True
+            return error
         error = error.__cause__ or error.__context__
-    return False
+    return None
 
 
 async def _call_waiting_out_rate_limits(
@@ -220,11 +222,13 @@ async def _call_waiting_out_rate_limits(
             async with gate:
                 return await asyncio.wait_for(scorer(sample), timeout=CALL_TIMEOUT_S)
         except Exception as error:
-            if waits == RATE_LIMIT_WAITS or not _is_rate_limit(error):
+            limited = _rate_limit_in(error)
+            wait = cooldown_s(limited) if limited else None
+            if waits == RATE_LIMIT_WAITS or wait is None:
                 raise
         waits += 1
         # Outside the gate: a sample sitting out a cooldown holds no slot.
-        await asyncio.sleep(RATE_LIMIT_WAIT_S)
+        await asyncio.sleep(wait)
 
 
 async def _score_one(
