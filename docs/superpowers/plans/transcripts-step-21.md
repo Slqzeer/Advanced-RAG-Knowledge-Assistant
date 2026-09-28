@@ -514,3 +514,18 @@ refuses to continue past a row with fewer than 38 questions or any judge failure
 
 The next attempt was stopped by the host running out of memory (1.5 GB free of
 16 GB) before `ragas-k5` finished. No row was written.
+
+### The GitHub judge cannot carry an arm
+
+With memory freed, `ragas-k5` ran to completion in 42 min (38/38 answers
+generated, 0 generation failures), but the judge lost **49 of 114** metric
+calls: **all 38 relevancy calls**, plus 6 faithfulness calls to 429, 4 to the
+180 s timeout, and 1 to a `max_tokens` truncation. Relevancy makes three
+sequential judge calls per sample, so it is the first metric a rate limit
+starves. Five 170 s waits did not outlast OmniRoute's cooldown on
+`gpt-4o-2024-11-20`, which escalates with every rejected call: it read
+**1 046 s** eleven minutes after the arm ended. The runner refused the row and
+it was discarded, as Task 7 ruled for lossy rows: the calls lost are not random.
+
+No other GitHub model is reachable on this plan: `gpt-5.x`, `gpt-4-0125-preview`
+and every Claude model return `400 The requested model is not supported`.
