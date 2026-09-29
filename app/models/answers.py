@@ -83,3 +83,6 @@ class Answer(BaseModel):
     # the text: "no_context" is structural, "model_declined" is is_refusal() on
     # what the model wrote, because text is the only channel a model has.
     refusal: Literal["no_context", "model_declined"] | None = None
+    # Step 23. Which cache layer served this answer, or None when it was
+    # generated on this call. On a hit, latency_ms is the lookup's own time.
+    cache: Literal["exact", "semantic"] | None = None

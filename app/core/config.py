@@ -115,6 +115,15 @@ class Settings(BaseSettings):
     # Step 22. Drop chunks matching guard.INJECTION_PATTERNS before the context
     # is built. Stays off unless Rule D passes.
     guard_detect: bool = False
+    # Step 23. Empty means no cache and no connection attempt: tests and every
+    # command that predates the cache behave exactly as before it existed.
+    redis_url: str = ""
+    # A backstop, not the invalidation: scripts/index_corpus.py clears the cache
+    # on re-index, and refusals are never stored.
+    cache_ttl_s: int = 604800
+    # Cosine, not VSIM's (1 + cosine) / 2 score. None is off. Set only if Rule S
+    # passes on data/eval/cache_pairs.jsonl.
+    cache_semantic_threshold: float | None = None
     corpus_dir: Path = Path("data/raw")
 
 
