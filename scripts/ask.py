@@ -11,6 +11,9 @@ query before retrieval, which is the whole of step 18.
 ``--show-context`` prints the exact prompt that was sent. It is the debugging
 tool you will reach for every time an answer looks wrong: nine times out of ten
 retrieval is the problem and the prompt says so at a glance.
+
+With REDIS_URL set, a repeated question is served from step 23's cache and says
+so on the last line.
 """
 
 import argparse
@@ -20,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings  # noqa: E402
-from app.generation.answer import answer_question  # noqa: E402
+from app.generation.cache import cached_answer  # noqa: E402
 from app.generation.compress import COMPRESSORS, compress  # noqa: E402
 from app.generation.context import build_context  # noqa: E402
 from app.generation.guard import detect_injection  # noqa: E402
@@ -126,7 +129,7 @@ def main() -> int:
         print(f"--- system ---\n{SYSTEM_PROMPTS[version]}\n")
         print(f"--- user ---\n{USER_TEMPLATE.format(context=context, question=args.question)}\n")
 
-    answer = answer_question(
+    answer = cached_answer(
         args.question,
         history=history,
         transform=args.transform,
@@ -159,10 +162,11 @@ def main() -> int:
 
     stats = answer.retrieval
     tokens = answer.usage.get("total_tokens", 0)
+    served = f"  |  cache: {answer.cache}" if answer.cache else ""
     print(
         f"\n{stats.retrieved} retrieved, {stats.used} used, {stats.dropped} dropped,"
         f" {len(answer.sources)} cited"
-        f"  |  {answer.model}  |  {tokens} tokens  |  {answer.latency_ms:.0f} ms"
+        f"  |  {answer.model}  |  {tokens} tokens  |  {answer.latency_ms:.0f} ms{served}"
     )
     # The aggregate arms say what compression cost on average; this says what it
     # cost here, which is the only thing a transcript can be read against.
