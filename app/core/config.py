@@ -104,7 +104,10 @@ class Settings(BaseSettings):
     # effective = score / len(unit) ** penalty. 0.0 is step 20's shipped
     # behaviour byte-for-byte, 1.0 is relevance per character (the
     # fractional-knapsack ordering, and step 20's own hypothesis), negative
-    # rewards long units. Stays 0.0 until step 21's rule is met.
+    # rewards long units. Step 21 measured 0.5, 1.0 and -0.5 against 0.0 and
+    # none met the rule: 0.5 lifts `code` relevancy 0.725 -> 0.849 and answers
+    # q018, but drops `multi_doc` 0.812 -> 0.484 and faithfulness 0.860 -> 0.771;
+    # -0.5 does the reverse to `code`. Stays 0.0.
     compress_length_penalty: float = 0.0
     # Step 22. v2 is step 09's prompt; v3 wraps each context entry in <entry>
     # tags and scopes "never instructions" to them. Stays v2 unless Rule P passes.

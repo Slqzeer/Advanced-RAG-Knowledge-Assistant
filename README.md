@@ -19,6 +19,7 @@
 - [Recherche hybride — BM25, RRF et une règle non atteinte](#recherche-hybride--bm25-rrf-et-une-règle-non-atteinte)
 - [Reranking par cross-encoder — le plafond mesuré, puis la règle non atteinte](#reranking-par-cross-encoder--le-plafond-mesuré-puis-la-règle-non-atteinte)
 - [Transformations de requête — réécriture, conversation et expansion](#transformations-de-requête--réécriture-conversation-et-expansion)
+- [Évaluation de la génération — étape 21](#évaluation-de-la-génération--étape-21--ragas-et-ce-que-recallcontext-ne-voyait-pas)
 - [Garde-fous — étape 22](#garde-fous--étape-22--le-refus-devient-un-champ-et-aucune-défense-ne-gagne-sa-place)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
@@ -40,6 +41,8 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 ## État actuel
 
 **Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+
+**Étape 21 terminée — RAGAS : un juge note enfin la réponse, pas le retrieval.** `judge()` isole `ragas` dans un seul module et note faithfulness et relevancy sur les contextes réellement envoyés au modèle, derrière une porte de quatre fixtures rejouée à chaque changement de juge. Le verdict tient en deux phrases. **En moyenne, le juge donne raison à Recall@context** : le vivier compressé de l'étape 20 fait monter la relevancy de 0,649 à **0,705**, onze fois le bruit mesuré en répétant le contrôle, sans toucher la faithfulness. **Sur `q018`, il lui donne tort** : 0,883 sans compression, **0,000** avec, dans les deux runs du contrôle. La pénalité de longueur α qui devait réconcilier les deux n'est pas promue — α 0,5 rend `code` (0,725 → 0,849) et `q018`, mais rend aussi tout le gain de `multi_doc` (0,812 → 0,484) — et la prédiction pré-enregistrée, qui annonçait une perte sur `code`, était fausse. `COMPRESS_LENGTH_PENALTY` reste 0,0. Les bras tournent sur `gpt-4o-mini` jugé par `gpt-4o`, via GitHub derrière OmniRoute, sans context precision : voir [la section de l'étape 21](#évaluation-de-la-génération--étape-21--ragas-et-ce-que-recallcontext-ne-voyait-pas).
 
 Fonctionnalités disponibles :
 
@@ -65,6 +68,7 @@ Fonctionnalités disponibles :
 - fixture conversationnelle via `data/eval/conversations.jsonl` et `scripts/benchmark_conversations.py` : dix suivis référentiels annotés au niveau document, `EvalConversation` qui hérite de tous les validateurs du jeu figé, et deux lignes `conv-raw` / `conv-rewrite` dont l'écart est le chiffre que l'étape 18 existe pour produire ;
 - compression contextuelle via `app.generation.compress` : registre `COMPRESSORS` (`embedding`) où une entrée ne fait que *noter* des unités et où `compress()` possède seul le découpage, le budget glouton, le réassemblage dans l'ordre du document avec marqueur `[…]` et la reconstruction des `ScoredChunk` ; `sentence_spans()` promu hors de `chunk.py` pour que le compresseur découpe exactement comme l'indexeur, bloc de code clôturé compris ; branché dans `answer_question()` **entre** `search()` et `build_context()`, `--compress`, `--compress-candidates` et `--compress-budget` sur `ask.py` et `benchmark.py` ; +79 ms p50 pour ~200 phrases, cache sqlite réutilisé, aucune dépendance ajoutée ;
 - banc d'essai côté réponse via `scripts/benchmark_answers.py` : taux de refus, caractères de contexte et `prompt_tokens` réellement facturés, une ligne par run dans `data/eval/answers.jsonl`, séparé de `results.jsonl` dont les lignes sont des runs de retrieval ;
+- juge de génération via `app.evaluation.judge` : faithfulness, relevancy et context precision sans référence (RAGAS 0.4, seul module qui importe `ragas`), `--ragas` sur `benchmark_answers.py`, relevancy vectorisée en local par fastembed, porte de calibration en quatre fixtures sous `pytest -m requires_api` ;
 - métriques et banc d'essai via `app.evaluation.metrics`, `app.evaluation.benchmark` et `scripts/benchmark.py` : Recall@K, Precision@K, MRR, Hit Rate@K et NDCG@K sur des documents dédupliqués, ventilation par catégorie, latence p50/p95, historique versionné dans `data/eval/results.jsonl` avec le commit git de chaque run.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
@@ -1457,6 +1461,169 @@ ce que l'étape 21 existe pour mesurer proprement, et c'est un argument pour not
 | Promouvoir `d20-b1.5x` | jamais sans re-mesurer le budget : elle gagne 0,013 de rappel pour +55 % de tokens, ce que cette étape s'interdisait |
 | Modifier `data/eval/questions.jsonl` | jamais : le jeu est figé depuis l'étape 10 |
 
+## Évaluation de la génération — étape 21 : RAGAS, et ce que Recall@context ne voyait pas
+
+Jusqu'ici, chaque métrique du projet notait le **retrieval**. L'étape 20 a mesuré la limite de
+ça sur une question nommée : `q018` — *« How do I write a test that calls my own
+endpoints? »* — passe d'une réponse citée à un refus pendant que le Recall@context de sa
+catégorie ne bouge pas. Les bons documents étaient dans le contexte les deux fois ; les blocs
+de code qui répondaient n'y étaient plus. L'étape 21 ajoute un juge qui note **la réponse**.
+
+- **`app/evaluation/judge.py`** — le seul module qui importe `ragas`. `judge()` prend des
+  `JudgeSample` (question, réponse, contextes réellement envoyés) et rend des flottants ; rien
+  de ragas ne traverse la frontière. Trois métriques sans référence, parce que le jeu n'a pas
+  de réponses de référence (décision de l'étape 10) : **faithfulness** (chaque affirmation
+  est-elle soutenue par le contexte ?), **relevancy** (la réponse répond-elle à la question ?),
+  **context precision**. Context recall et answer correctness restent un tiret.
+- **`Answer.contexts`** et `answer_question(include_contexts=True)` — le texte compressé qui a
+  réellement atteint le modèle, jamais le vivier retrouvé.
+- **`--ragas`** sur `benchmark_answers.py`, qui écrit les scores par question, par catégorie
+  et agrégés dans la ligne de `data/eval/answers.jsonl`, avec le nombre d'appels perdus.
+- **`COMPRESS_LENGTH_PENALTY`** — l'exposant α du compresseur : `score / len(unité) ** α`.
+  0,0 est le comportement de l'étape 20 à l'octet près. **Il reste 0,0.**
+
+### D'abord la porte : un juge qui note tout à 0,9 ne mesure rien
+
+Avant le moindre bras, quatre fixtures prouvent que le juge sépare le bon du mauvais. Elles
+ont été rejouées à chaque changement de juge — un nouveau juge est un nouvel instrument :
+
+| Clause | Fixture | Seuil | `gpt-4o` (OpenAI) | `claude-sonnet-4-6` | `gpt-4o` (GitHub) |
+|---|---|---|---:|---:|---:|
+| 1 | refus → relevancy | < 0,3 | 0,000 | 0,000 | **0,000** |
+| 2 | affirmation inventée → faithfulness | < 0,5 | 0,000 | 0,000 | **0,000** |
+| 3 | chunk pertinent enfoui sous 3 inutiles → context precision | < 0,6 | 0,250 | 0,250 | **0,250** |
+| 3 | le même, remonté en tête | > 0,9 | 1,000 | 1,000 | **1,000** |
+| 4 | bonne réponse complète → relevancy | > 0,7 | 0,992 | 0,998 | **0,998** |
+
+La clause 3 a d'abord échoué, et c'était la fixture : context precision est une précision
+moyenne sur un classement, et un chunk pertinent au rang 1 vaut 1,0 par définition, quoi qu'il
+y ait derrière. Enfoui au rang 4, il vaut exactement 1/4 — ce que les trois juges rendent à la
+décimale.
+
+### Trois fournisseurs en cours de route
+
+La clé OpenAI a expiré entre la porte et le premier bras. Le juge passe par OmniRoute comme le
+générateur de l'étape 22 (`d2ca2e7`), avec les en-têtes anti-cache. Aucun modèle d'embedding de
+la passerelle ne répond : la cosinus de relevancy tourne en local, `BAAI/bge-small-en-v1.5` via
+fastembed (`fbe069a`) — gratuit, et le même texte donne toujours le même vecteur. Le compte
+Antigravity s'est ensuite verrouillé au milieu du premier bras (« reset after 133h »). Les bras
+publiés tournent donc sur **GitHub** : générateur **`gpt-4o-mini`**, juge
+**`gpt-4o-2024-11-20`** — le couple des étapes 08 à 20.
+
+Le juge GitHub n'a pas tenu la charge à trois métriques : une première tentative de
+`ragas-k5` a perdu les 38 relevancy dans un cooldown qui s'allongeait à chaque relance (1 046 s).
+Les bras publiés tournent donc **sans context precision** — Task 6 avait prévu qu'elle serait
+presque plate entre bras, puisque la compression ne réordonne jamais le rang 1 ; prévu, pas
+mesuré — et **un appel à la fois**. Trois
+correctifs sont nés de ces bras : attendre le `reset_seconds` que la passerelle annonce au lieu
+de relancer dedans (`8af8f9d`), relancer un appel suspendu au lieu de perdre sa cellule
+(`5d392d0`), et un runner qui refuse toute ligne à moins de 38 questions ou avec un seul appel
+perdu. Une cellule perdue n'est pas neutre : `q029` est un refus, et perdre son 0,000 faisait
+monter la relevancy du bras de 0,019.
+
+### La règle, écrite avant le premier run
+
+Contre `ragas-d20-a0`, le défaut livré. Un α est promu si les trois clauses tiennent :
+(1) faithfulness ≥ contrôle − 0,01 ; (2) relevancy ≥ contrôle + 0,03 ; (3) aucune catégorie ne
+perd plus de 0,05 de relevancy, **`code` nommée**. Et une prédiction : α > 0 échouera sur
+`code`, parce que diviser par la longueur pénalise encore plus les blocs de 900 caractères.
+
+### Le bruit, mesuré avant de lire la règle
+
+L'étape 22 a trouvé que le générateur change 30 réponses sur 38 entre deux runs identiques. Le
+contrôle a donc tourné **deux fois** :
+
+| | `ragas-d20-a0` | `ragas-d20-a0-r2` | écart |
+|---|---:|---:|---:|
+| faithfulness | 0,860 | 0,829 | **0,031** |
+| relevancy | 0,705 | 0,700 | **0,005** |
+
+**La relevancy est stable. La faithfulness bouge de 0,031 entre deux runs identiques — trois
+fois la tolérance de la clause 1.** Une marge de clause 1 inférieure à 0,031 se lit « non
+distinguable ».
+
+### Les six bras mesurés
+
+38/38 questions, 0 échec de génération, 0 appel de juge perdu sur chaque ligne. Relevancy par
+catégorie.
+
+| Bras | Faithfulness | Relevancy | Refus | Réponse p50 | `code` | `conceptual` | `exact` | `multi_doc` | `q018` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| `ragas-k5` (k=5, sans compression) | 0,863 | 0,649 | 0,263 | 507 | 0,727 | 0,660 | 0,696 | 0,478 | répond, **0,883** |
+| `ragas-d20-a0` (défaut livré) | 0,860 | **0,705** | 0,211 | 458 | 0,725 | 0,682 | 0,621 | **0,812** | **refuse, 0,000** |
+| `ragas-d20-a0-r2` (répétition) | 0,829 | 0,700 | 0,211 | 505 | 0,725 | 0,667 | 0,620 | 0,809 | refuse, 0,000 |
+| `ragas-d20-a05` (α 0,5) | 0,771 | 0,661 | 0,263 | 380 | **0,849** | 0,669 | 0,605 | 0,484 | répond, **0,910** |
+| `ragas-d20-a10` (α 1,0) | 0,782 | 0,605 | 0,316 | 337 | 0,834 | 0,544 | 0,538 | 0,477 | répond, 0,883 |
+| `ragas-d20-aneg05` (α −0,5) | 0,868 | 0,679 | 0,237 | 467 | 0,623 | 0,608 | 0,703 | 0,807 | refuse, 0,000 |
+
+**La relevancy suit aussi la complétude de la réponse, pas seulement sa qualité.** Task 1 a
+mesuré une réponse correcte d'une clause à 0,278 et la même, complète, à 0,992. Chaque bras change
+la quantité de contexte, donc la longueur de la réponse : un gain de relevancy qui arrive avec
+un gain de longueur est une affirmation plus faible. C'est pour ça que la colonne « Réponse
+p50 » (en caractères) est à côté — et ici, le gain du contrôle arrive avec des réponses **plus
+courtes** (507 → 458).
+
+### Le juge a-t-il donné raison à Recall@context ? Oui en moyenne, non sur `q018`
+
+C'est la question pour laquelle l'étape existe. Le vivier compressé de l'étape 20 fait monter la
+relevancy de **0,649 à 0,705**, onze fois le bruit, sans toucher la faithfulness (0,863 →
+0,860) : **Recall@context était un proxy honnête de la qualité moyenne.** Le gain vient
+presque entièrement de `multi_doc` (0,478 → **0,812**), exactement la catégorie qui portait le
+gain de recall de l'étape 20. Et `q018` passe de **0,883 à 0,000** dans les deux runs du
+contrôle : la régression que l'étape 20 avait vue à la main est maintenant un chiffre. Le
+compresseur achète du recall et paie en qualité sur une question nommée, et la moyenne ne le
+montre pas.
+
+### Le verdict : aucun α ne passe, et la prédiction était fausse
+
+| α | Clause 1 (≥ 0,850) | Clause 2 (≥ 0,735) | Clause 3 (aucune catégorie −0,05) | Verdict |
+|---|---|---|---|---|
+| 0,5 | 0,771 — **échoue** | 0,661 — **échoue** | `multi_doc` −0,328 — **échoue** | non promu |
+| 1,0 | 0,782 — **échoue** | 0,605 — **échoue** | `multi_doc` −0,335, `conceptual` −0,138, `exact` −0,083 — **échoue** | non promu |
+| −0,5 | 0,868 — passe, dans le bruit | 0,679 — **échoue** | `code` −0,102, `conceptual` −0,074 — **échoue** | non promu |
+
+**`COMPRESS_LENGTH_PENALTY` reste 0,0.** Et la prédiction pré-enregistrée était fausse : α 0,5
+ne fait pas perdre `code`, il le fait **gagner** (0,725 → **0,849**) et rend sa réponse à `q018`
+(0,910). Il échoue sur **`multi_doc`**, qui retombe de 0,812 à 0,484 — le niveau exact de
+`ragas-k5`. Une pénalité de longueur n'échange pas de la qualité contre de la brièveté : elle
+échange le gain de `multi_doc` contre les réponses de `code`. Le vivier large aide les questions
+multi-documents parce qu'il peut s'offrir plusieurs unités moyennes venues de pages différentes ;
+préférer les unités courtes dépense le budget en fragments et perd cette largeur. α −0,5 fait
+l'inverse et coûte 0,102 à `code`. Un seul exposant ne résout pas cette tension.
+
+### `q018`, mot pour mot
+
+`ragas-k5` — faithfulness 1,000, relevancy 0,883 :
+
+> To write a test that calls your own endpoints in a FastAPI application, you can use the `TestClient`. […] 6. **Use assertions**: Write simple `assert` statements to check the responses from your endpoints. Here is a brief example structure based on the context: *(un bloc `TestClient(app)` / `client.get(...)` / `assert response.status_code == 200`)* […] [1][2].
+
+`ragas-d20-a0`, le défaut livré — faithfulness 1,000, relevancy 0,000 :
+
+> I do not have enough information in the provided context to answer this.
+
+`ragas-d20-a05` — faithfulness 1,000, relevancy 0,910 : les mêmes cinq étapes, citées, **sans
+l'exemple de code**. Même quand il répond, le compresseur préfère une unité courte à la clôture
+de 900 caractères. Les trois réponses complètes sont dans
+[`transcripts-step-21.md`](docs/superpowers/plans/transcripts-step-21.md).
+
+### Ce que coûte le juge
+
+Environ **190 appels de juge par bras** (faithfulness 2 + relevancy 3 par question), un à la
+fois. Le temps réel va de **7 à 60 minutes** pour les mêmes 38 questions : c'est le cooldown de
+la passerelle qui le fixe, pas le travail. Le forfait GitHub Copilot n'affiche pas de prix par
+appel. Sous la clé OpenAI, Task 5 avait mesuré 3 à 7 s par appel `gpt-4o`. **Un juge hors ligne
+de plusieurs minutes par question ne peut pas devenir un garde-fou par requête** : c'est
+l'entrée que l'étape 22 aurait pu prendre, et elle ne la prend pas.
+
+### Écarté volontairement
+
+| Écarté | À ajouter quand |
+|---|---|
+| Context precision sur les bras publiés | quand un juge tiendra ~380 appels par bras ; Task 6 la prévoit presque plate entre bras, sans l'avoir mesuré |
+| Context recall, answer correctness | quand des réponses de référence existeront — jamais sans toucher au jeu figé |
+| Un α par catégorie, ou un budget réservé aux blocs de code | quand une règle sera écrite pour ; c'est ce que la clause 3 suggère, pas ce qu'elle mesure |
+| `--ragas` dans la CI de l'étape 28 | quand un appel de juge coûtera des secondes, pas des minutes de cooldown |
+
 ## Garde-fous — étape 22 : le refus devient un champ, et aucune défense ne gagne sa place
 
 L'étape livre quatre choses et n'en active aucune par défaut, parce qu'aucune règle
@@ -1778,6 +1945,14 @@ uv run python scripts/benchmark_answers.py --label "inj-v2-detect" --prompt-vers
 # --generation-model nomme le modele du bras ; GENERATION_BASE_URL nomme qui le sert (OmniRoute)
 uv run python scripts/benchmark_answers.py --label "answers-v3-d20" --prompt-version v3 --generation-model antigravity/gemini-3.6-flash-high
 
+# Juger les reponses - etape 21 : faithfulness et relevancy, par question et par categorie
+uv run python scripts/benchmark_answers.py --label "ragas-d20-a0" --ragas
+uv run python scripts/benchmark_answers.py --label "ragas-k5" --ragas --compress "" --top-k 5
+# --ragas-metrics choisit les metriques, --judge-model le juge du bras, --length-penalty l'exposant alpha
+uv run python scripts/benchmark_answers.py --label "ragas-d20-a05" --ragas --ragas-metrics faithfulness,relevancy --judge-model github/gpt-4o-2024-11-20 --length-penalty 0.5
+# La porte de calibration du juge (appels reels, donc hors du pytest par defaut)
+uv run pytest -m requires_api tests/test_evaluation_judge.py
+
 # Échouer sur une citation inventée au lieu de l'avertir (campagnes d'évaluation)
 uv run python scripts/ask.py "What does Depends() with yield do differently?" --strict
 
@@ -1814,7 +1989,7 @@ docker compose down
 ├── app/
 │   ├── api/          # future API FastAPI
 │   ├── core/         # configuration partagée
-│   ├── evaluation/   # jeu annoté, métriques de retrieval, banc d'essai
+│   ├── evaluation/   # jeu annoté, métriques de retrieval, banc d'essai, juge RAGAS
 │   ├── generation/   # contexte, appel au modèle, citations, orchestration
 │   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
@@ -1845,7 +2020,7 @@ docker compose down
 - [x] **Phase 8 — Multi-query retrieval** : augmenter le recall par expansion de requêtes (faite ; registre `TRANSFORMS` et fan-out derrière `search(transform=)`, `QUERY_TRANSFORM` reste vide — meilleure ligne 0,765 contre 0,776, mais Recall@10 0,807 et MRR 0,867, le meilleur du projet).
 - [ ] **Phase 9 — Compression contextuelle** : réduire le contexte aux passages pertinents.
 - [x] **Phase 10 — Citations** : produire des réponses fondées et sourcées (faites, `v0.3`).
-- [ ] **Phase 11 — Évaluation complète** : mesurer retrieval et génération.
+- [x] **Phase 11 — Évaluation complète** : mesurer retrieval et génération (faite ; faithfulness et relevancy par RAGAS, le juge confirme Recall@context en moyenne — relevancy 0,649 → 0,705 — et le contredit sur `q018`, 0,883 → 0,000 ; `COMPRESS_LENGTH_PENALTY` reste 0,0).
 - [x] **Phase 12 — Guardrails** : gérer le manque de contexte et les entrées hostiles (faite ; `Answer.refusal` livré, seuil de score rejeté hors ligne — 0 sur 7 —, prompt v3 et détecteur mesurés et non activés : le prompt v2 tient déjà 79 attaques sur 80).
 - [ ] **Phase 13 — Cache** : réduire latence et coût.
 - [ ] **Phase 14 — API professionnelle** : exposer les opérations FastAPI.
@@ -1876,6 +2051,19 @@ Une valeur absente signifie que l'expérience n'a pas encore été exécutée ; 
 | Multi-query n=3 + FlashRank (étape 19) | 0,735 | 0,792 | 0,754 | 1 900 ms* | ~0,0001 $ / question****** |
 | Suivi conversationnel nu (étape 18) | 0,100‡ | 0,300‡ | 0,127‡ | 32 ms* | — |
 | Suivi résolu contre l'historique (étape 18) | **0,600**‡ | **0,700**‡ | **0,567**‡ | 1 069 ms* | ~0,0001 $ / question****** |
+
+Génération, notée par le juge RAGAS de l'étape 21 sur les 38 questions répondables de [`data/eval/answers.jsonl`](data/eval/answers.jsonl). Générateur `github/gpt-4o-mini`, juge `github/gpt-4o-2024-11-20`. Un tiret signifie « non mesuré » : context precision a été retirée des bras pour tenir la charge du juge, et context recall comme answer correctness exigent des réponses de référence que le jeu figé n'a pas.
+
+| Bras (étape 21) | Faithfulness | Relevancy | Context precision | Context recall | Answer correctness | Refus | Réponse p50 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Sans compression, k=5 (`ragas-k5`) | 0,863 | 0,649 | — | — | — | 0,263 | 507 car. |
+| Compression d20, défaut livré (`ragas-d20-a0`) | 0,860 | **0,705** | — | — | — | **0,211** | 458 car. |
+| Même configuration, répétée (`ragas-d20-a0-r2`) | 0,829 | 0,700 | — | — | — | 0,211 | 505 car. |
+| α 0,5 (`ragas-d20-a05`) | 0,771 | 0,661 | — | — | — | 0,263 | 380 car. |
+| α 1,0 (`ragas-d20-a10`) | 0,782 | 0,605 | — | — | — | 0,316 | 337 car. |
+| α −0,5 (`ragas-d20-aneg05`) | **0,868** | 0,679 | — | — | — | 0,237 | 467 car. |
+
+La relevancy suit aussi la longueur de la réponse : lire chaque gain à côté de la colonne « Réponse p50 ». L'écart entre les deux runs du contrôle est le bruit — 0,031 de faithfulness, 0,005 de relevancy.
 
 \* Mesuré par `scripts/benchmark.py` sur les 45 questions non réservées : `dense-baseline` au commit `4640e02` (p50 57 ms, p95 89 ms), `dense-sentence` à l'étape 12 (p50 35 ms, p95 62 ms), `dense-sentence-doctype` et `dense-sentence-oracle-filter` à l'étape 13 (p50 65 et 63 ms, p95 94 et 92 ms — mesurés dans la même session, donc comparables entre eux mais pas à l'étape 12, dont la session était plus rapide sur toute la ligne). `bm25-sentence` et `hybrid-k60-d20` aux étapes 14-16 (p50 2 et 83 ms, p95 4 et 116 ms). Les lignes des étapes 18-19 sont mesurées sur `chunks_sentence` à `--top-k 10`, la configuration exacte de la baseline 0,776, et incluent l'appel de transformation dans la latence : `rewrite-standalone` (p50 897 ms, p95 1 957 ms), `multi-n2-dense` (p50 1 119 ms, p95 1 879 ms), `multi-n3-dense-rerank-flashrank` (p50 1 900 ms, p95 2 345 ms) ; `conv-raw` et `conv-rewrite` sur leurs dix conversations (p50 32 et 1 069 ms). Latence de recherche seule, vecteurs de requête en cache ; p50 320 ms et p95 1 522 ms au premier passage, quand il faut les calculer. Les métriques de génération restent vides jusqu'à l'étape 21.
 
