@@ -529,3 +529,32 @@ it was discarded, as Task 7 ruled for lossy rows: the calls lost are not random.
 
 No other GitHub model is reachable on this plan: `gpt-5.x`, `gpt-4-0125-preview`
 and every Claude model return `400 The requested model is not supported`.
+
+## Task 7 — the calibration bracket
+
+Generator `github/gpt-4o-mini`, judge `github/gpt-4o-2024-11-20`, relevancy
+embedder `BAAI/bge-small-en-v1.5`, metrics faithfulness + relevancy only (see
+"lighter load" above). Both rows: 38/38 questions, 0 generation failures,
+0 judge failures.
+
+| arm | faithfulness | relevancy | refusal | answer chars p50 | `q018` |
+|---|---|---|---|---|---|
+| `ragas-k5` (top-k 5, no compression) | 0.863 | 0.649 | 0.263 | 507 | answered — faith 1.000, relev **0.883** |
+| `ragas-d20-a0` (shipped default) | 0.860 | **0.705** | 0.211 | 458 | **refused** — faith 1.000, relev **0.000** |
+
+By category (relevancy): `code` 0.727 → 0.725, `conceptual` 0.660 → 0.682,
+`exact` 0.696 → 0.621, `multi_doc` 0.478 → **0.812**.
+
+**Outcome, written before any sweep arm was read: the judge agrees with
+`q018`.** The aggregate rises (+0.056 relevancy, faithfulness flat), and
+`q018` falls from a cited answer scoring 0.883 to a refusal scoring 0.000 —
+step 20's regression, reproduced on a different day and now scored by the judge
+instead of noticed by hand. The compressor buys recall and spends answer
+quality on a named question, and the α sweep is the right next move.
+
+Two qualifications. The gain comes almost entirely from `multi_doc` (+0.334),
+the category step 20's recall gain came from, while `exact` loses 0.075. And
+answers got *shorter* (p50 507 → 458), so this is not the verbosity confound
+Task 1 warned about. Whether +0.056 exceeds this generator's run-to-run noise
+is what `ragas-d20-a0-r2` measures; until it lands, the rise is a direction,
+not a result.
