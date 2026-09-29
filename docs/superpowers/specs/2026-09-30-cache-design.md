@@ -119,7 +119,7 @@ cached_answer(question, history, **kwargs)
   │
   └─ miss ──► answer_question(...)
                refusal is None ──► SET answer:<key> EX ttl
-                                   VADD qvec NOQUANT <vector> <key> SETATTR {"fp": ...}
+               and no history  ──► VADD qvec FP32 <vector> <key> NOQUANT SETATTR {"fp": ...}
 ```
 
 ### The key
@@ -137,11 +137,13 @@ whitespace):
   `cache_ttl_s`, `cache_semantic_threshold`, and `judge_*`. A denylist rather
   than an allowlist: a setting added at a later step changes the key
   automatically, and forgetting one costs a cache miss, never a stale answer.
-- The resolved per-call kwargs: `top_k`, `mode`, `transform`, `transform_n`,
+- The per-call kwargs, as passed: `top_k`, `mode`, `transform`, `transform_n`,
   `rerank`, `rerank_candidates`, `compress`, `compress_candidates`,
   `compress_budget`, `filters`, `max_context_chars`, `strict`,
   `include_contexts`. `include_contexts` is in the key because it changes what the
-  returned `Answer` carries.
+  returned `Answer` carries. They are keyed as passed, not resolved against
+  settings, so `top_k=None` and `top_k=5` are two keys for one answer: a harmless
+  miss, where resolving them would duplicate `answer_question()`'s defaults.
 
 **Settings fingerprint** = `sha256` of the same object without `question` and
 `history`. It is the `fp` attribute on every vector-set element, and `VSIM`'s
@@ -240,17 +242,27 @@ The cache is an optimisation. It must never fail a query.
 
 ## Dependencies
 
-`redis` (redis-py), added with `uv lock` in the same commit. It ships vector-set
-commands; those are used rather than raw `execute_command`.
+`redis` (redis-py), added with `uv lock` in the same commit. Vector-set commands
+go through `execute_command` with the documented `VADD`/`VSIM`/`VREM` syntax:
+the server's command syntax is documented and verified, and redis-py's wrapper
+signatures were not. The one unknown, the reply shape of `VSIM … WITHSCORES`, is
+probed once and pinned by a test.
+
+Every history-free miss is added to the vector set, whether or not the semantic
+layer is on, so turning it on later starts from a warm set.
 
 ## Measurement
 
 ### The fixture
 
 `data/eval/cache_pairs.jsonl`, one pair per line:
-`{id, anchor_id, anchor, probe, kind}`, where `kind` is `paraphrase`,
-`near_miss` or `unanswerable`. It loads through `load_dataset(model=)` with its
-own pydantic model, as `EvalConversation` does.
+`CachePair(EvalQuestion)`: `question` is the probe, `relevant_document_ids` and
+`relevant_sections` are the probe's own ground truth, plus `anchor_id` and
+`kind` (`paraphrase`, `near_miss` or `unanswerable`). It loads through
+`load_dataset(model=)`, as `EvalConversation` does. Carrying the probe's ground
+truth is what makes the fixture's rule checkable by a test: a paraphrase keeps
+its anchor's documents, and a near-miss does not keep both its documents and
+its sections.
 
 - **38 `paraphrase`**: one per answerable question. Same intent and same
   ground-truth documents, worded to share as few content words with the anchor as
@@ -269,14 +281,18 @@ which makes should-hit pairs easy and the measured recall optimistic.
 ### The sweep (offline, no generation)
 
 `scripts/benchmark_cache.py --sweep` embeds every anchor and probe through
-`embed_query()` (sqlite cache, about $0.0001) and computes plain cosine per pair.
-It reports:
+`embed_query()` (sqlite cache, about $0.0001) and scores each probe by its
+**nearest anchor among all 38**, because that is what Redis does: it compares a
+probe against every stored question, not only its pair's. A **would-be false
+hit** is a must-miss probe (`near_miss` or `unanswerable`, 45) at its nearest
+cosine, or a paraphrase whose nearest anchor is *not* its own. It reports:
 
-- the paraphrase cosine distribution against the must-miss distribution
-  (`near_miss` + `unanswerable`, 45 pairs), and their overlap;
-- the **candidate threshold: the highest must-miss cosine + 0.02**. The margin is
-  pre-registered. The lowest threshold with zero false hits would sit exactly on
-  this fixture's edge, which is fitting the threshold to the data it is judged on.
+- the own-anchor cosine distribution per kind, and the paraphrases whose nearest
+  anchor is another one;
+- the **candidate threshold: the highest would-be false hit + 0.02**. The margin
+  is pre-registered. The lowest threshold with zero false hits would sit exactly
+  on this fixture's edge, which is fitting the threshold to the data it is judged
+  on.
 
 ### Rule S: the semantic layer
 
@@ -289,33 +305,45 @@ Both clauses pass: `CACHE_SEMANTIC_THRESHOLD` is set to the candidate. Either
 fails: it stays `None`, and the published finding is how far the two
 distributions overlap.
 
+Clause 1 holds **on this fixture by construction**: the candidate sits above
+every would-be false hit. The rule's real content on the fixture is clause 2.
+Clause 1 is tested out of sample by the semantic arm, through Redis's own
+search.
+
 ### Replay arms
 
 1. **`cache-cold`**: `clear_cache()`, then the 38 answerable anchors through
    `cached_answer()`. All misses: p50/p95 latency, `usage` tokens per answer.
 2. **`cache-exact`**: the same 38 again.
-3. **`cache-semantic`**, only if Rule S passed: the 38 paraphrases. Hit count,
-   p50/p95, and a pair-for-pair check that Redis's hits equal the sweep's
-   prediction. That catches a `VSIM` score scale or HNSW approximation that
-   differs from plain cosine.
+3. **`cache-semantic`**, only if Rule S passed: all 83 probes, with an
+   answerer that makes no generation call and returns a refusal, so a miss costs
+   nothing and stores nothing. Hit count, p50/p95, zero hits on the 45 must-miss
+   probes, no paraphrase served another anchor's answer, and a pair-for-pair check
+   that Redis's hits equal the sweep's prediction (excluding anchors cold refused,
+   which were never stored). That catches a `VSIM` score scale or HNSW
+   approximation that differs from plain cosine.
 
 Reported for each arm: hits, p50/p95 latency, tokens per miss, tokens saved per
 hit, and dollars at the generation model's list price. Through OmniRoute the real
-bill may differ, and the README says so. Rows go into `data/eval/results.jsonl`
-with the git commit, like every other benchmark. Generation spend: 38 calls in arm
-1; arms 2 and 3 add none.
+bill may differ, and the README says so. Rows go into `data/eval/cache.jsonl`
+with the git commit. Not `results.jsonl`: those rows are ranking metrics that
+`summarise()` renders. Generation spend: 38 calls in arm 1, one more per cold
+refusal in arm 2 (a refusal is never stored), none in arm 3.
 
 ### Rule E: the exact layer
 
-On `cache-exact`: **38 of 38** hits, answer text byte-identical to `cache-cold`,
-hit p50 **< 50 ms**. Expected to pass trivially. It is pre-registered so that a
+On `cache-exact`: **every answer `cache-cold` stored** is an exact hit,
+byte-identical to it, with hit p50 **< 50 ms**. Cold refusals are never stored,
+so they miss by design and are reported beside the hit count. (Amended before any
+arm ran: at step 20's refusal rate of 0.211, "38 of 38" would have failed by
+construction.) Expected to pass trivially. It is pre-registered so that a
 broken key shows up as a failed row, not as an assumption.
 
 ## Acceptance
 
 - Quality gates pass: `uv run ruff check . && uv run ruff format --check . && uv run mypy app && uv run pytest`.
 - The fixture is committed before the sweep script.
-- The sweep, Rule S's verdict, and all run arms are in `results.jsonl`, the README
+- The sweep, Rule S's verdict, and all run arms are in `cache.jsonl`, the README
   (French) and the roadmap, regressions and a failed Rule S included.
 - `docs/roadmap.md` is updated: current state, the step-map row, a bullet on what
   later steps inherit (including the follow-up assumption, in the wording above,
