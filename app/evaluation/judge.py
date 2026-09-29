@@ -221,11 +221,18 @@ async def _call_waiting_out_rate_limits(
         try:
             async with gate:
                 return await asyncio.wait_for(scorer(sample), timeout=CALL_TIMEOUT_S)
+        except TimeoutError:
+            # One hung gateway call per arm cost two ragas-d20-a0-r2 runs a cell
+            # each. A hang is not a verdict: ask again, straight away.
+            if waits == RATE_LIMIT_WAITS:
+                raise
+            wait = 0.0
         except Exception as error:
             limited = _rate_limit_in(error)
-            wait = cooldown_s(limited) if limited else None
-            if waits == RATE_LIMIT_WAITS or wait is None:
+            cooldown = cooldown_s(limited) if limited else None
+            if waits == RATE_LIMIT_WAITS or cooldown is None:
                 raise
+            wait = cooldown
         waits += 1
         # Outside the gate: a sample sitting out a cooldown holds no slot.
         await asyncio.sleep(wait)

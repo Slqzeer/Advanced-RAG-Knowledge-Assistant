@@ -133,6 +133,30 @@ def test_a_stuck_call_times_out_and_the_other_samples_still_score(
     assert results[1].scores["faithfulness"] == 0.9
 
 
+def test_a_call_that_hangs_once_is_retried_instead_of_losing_the_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two step 21 arms in a row lost exactly one cell each to a single hung
+    # gateway call. A lost cell is not neutral: q029 was a refusal, and dropping
+    # its 0.000 lifted the arm's relevancy by 0.019.
+    monkeypatch.setattr("app.evaluation.judge.CALL_TIMEOUT_S", 0.05)
+    calls = 0
+
+    async def hangs_once(sample: JudgeSample) -> float:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(10.0)
+        return 0.4
+
+    results = judge(
+        [sample("q001", "first?")], settings=SETTINGS, scorers={"faithfulness": hangs_once}
+    )
+
+    assert results[0].scores == {"faithfulness": 0.4}
+    assert calls == 2
+
+
 def test_a_rate_limited_call_waits_out_the_cooldown_instead_of_losing_the_score(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
