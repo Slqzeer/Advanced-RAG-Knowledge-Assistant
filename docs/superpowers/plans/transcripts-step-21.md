@@ -558,3 +558,131 @@ answers got *shorter* (p50 507 → 458), so this is not the verbosity confound
 Task 1 warned about. Whether +0.056 exceeds this generator's run-to-run noise
 is what `ragas-d20-a0-r2` measures; until it lands, the rise is a direction,
 not a result.
+
+### The repeated control
+
+`ragas-d20-a0-r2` needed three attempts. The first two each lost exactly one
+cell to a single hung gateway call (`q029` relevancy, then `q035`
+faithfulness) and were discarded. `q029` is a refusal, so dropping its 0.000
+lifted the arm's relevancy from 0.705 to 0.724 — the size of the noise this arm
+measures. `5d392d0` retries a hung call instead of losing it; the third attempt
+was clean.
+
+| | `ragas-d20-a0` | `ragas-d20-a0-r2` | run-to-run gap |
+|---|---|---|---|
+| faithfulness | 0.860 | 0.829 | **0.031** |
+| relevancy | 0.705 | 0.700 | **0.005** |
+| relevancy by category | 0.725 / 0.682 / 0.621 / 0.812 | 0.725 / 0.667 / 0.620 / 0.809 | ≤ 0.015 |
+| `q018` | refused, 0.000 | refused, 0.000 | — |
+
+Relevancy is stable on this generator; the bracket's +0.056 is eleven times its
+noise and stands as a result. **Faithfulness moves 0.031 between identical runs,
+three times Part B's clause-1 tolerance of 0.01.** A clause-1 margin inside
+0.031 is read as *not distinguishable*, in either direction.
+
+## Task 8 — the α sweep
+
+All rows: generator `github/gpt-4o-mini`, judge `github/gpt-4o-2024-11-20`,
+38/38 questions, 0 generation failures, 0 judge failures. Context precision was
+not run (lighter load) and is an em dash. Relevancy by category is
+`code / conceptual / exact / multi_doc`.
+
+| arm | faith | relev | refusal | answer chars p50 | code | conceptual | exact | multi_doc | `q018` | wall clock |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `ragas-k5` | 0.863 | 0.649 | 0.263 | 507 | 0.727 | 0.660 | 0.696 | 0.478 | answered 0.883 | 11 min |
+| `ragas-d20-a0` (control) | 0.860 | **0.705** | 0.211 | 458 | 0.725 | 0.682 | 0.621 | 0.812 | refused 0.000 | 60 min |
+| `ragas-d20-a0-r2` | 0.829 | 0.700 | 0.211 | 505 | 0.725 | 0.667 | 0.620 | 0.809 | refused 0.000 | 18 min |
+| `ragas-d20-a05` (α 0.5) | 0.771 | 0.661 | 0.263 | 380 | **0.849** | 0.669 | 0.605 | 0.484 | answered **0.910** | 7 min |
+| `ragas-d20-a10` (α 1.0) | 0.782 | 0.605 | 0.316 | 337 | 0.834 | 0.544 | 0.538 | 0.477 | answered 0.883 | 7 min |
+| `ragas-d20-aneg05` (α −0.5) | 0.868 | 0.679 | 0.237 | 467 | 0.623 | 0.608 | 0.703 | 0.807 | refused 0.000 | 23 min |
+
+**Cost and wall clock.** About 190 judge LLM calls per arm (faithfulness 2 +
+relevancy 3 per sample), one at a time. Wall clock ranged from 7 to 60 minutes
+and is set by the gateway's cooldowns, not the work: the same 38 questions took
+7 minutes on a clear credential and an hour on a cooling one. The GitHub
+Copilot plan shows no per-call price, so there is no dollar figure to publish.
+
+### `q018`, verbatim
+
+**`ragas-k5`** (top-k 5, no compression) — faithfulness 1.000, relevancy 0.883
+in the row:
+
+> To write a test that calls your own endpoints in a FastAPI application, you can use the `TestClient`. Here are the steps you should follow:
+> 1. **Install `httpx`**: First, ensure that you have `httpx` installed in your project by running the command: `$ uv add httpx`
+> 2. **Import `TestClient`**: Import `TestClient` in your test file.
+> 3. **Create a `TestClient` instance**: Pass your FastAPI application to the `TestClient` to create an instance.
+> 4. **Write test functions**: Create functions that start with `test_`, which is the standard convention for `pytest`.
+> 5. **Make requests**: Use the `TestClient` object to make requests to your endpoints, similar to how you would with `httpx`.
+> 6. **Use assertions**: Write simple `assert` statements to check the responses from your endpoints.
+>
+> Here is a brief example structure based on the context:
+> ```python
+> from fastapi.testclient import TestClient
+> from app.main import app  # Assuming your FastAPI app is in main.py
+> client = TestClient(app)
+> def test_my_endpoint():
+>     response = client.get("/my-endpoint", headers={"X-Token": "my-token"})
+>     assert response.status_code == 200
+>     assert response.json() == {"key": "value"}  # Replace with expected response
+> ```
+> This approach allows you to test your FastAPI endpoints effectively using `pytest` and `TestClient` [1][2].
+>
+> `5 retrieved, 5 used, 0 dropped, 2 cited | 3 379 context chars`
+
+**`ragas-d20-a0`** (the shipped default) — faithfulness 1.000, relevancy 0.000
+in both control rows:
+
+> I do not have enough information in the provided context to answer this.
+>
+> `20 retrieved, 13 used, 7 dropped, 0 cited | 4 267 context chars`
+
+**`ragas-d20-a05`** (α 0.5, not promoted) — faithfulness 1.000, relevancy 0.910:
+
+> To write a test that calls your own endpoints using FastAPI, you can use the `TestClient`. Here are the steps you should follow:
+> 1. First, ensure you have `httpx` installed in your project by running: `$ uv add httpx`
+> 2. Import `TestClient` and create a `TestClient` instance by passing your FastAPI application to it.
+> 3. Write your test functions with names that start with `test_`, following the standard `pytest` convention.
+> 4. Use the `TestClient` object to make requests to your endpoints, similar to how you would use `httpx`.
+> 5. Write simple `assert` statements to check the responses from your endpoints using standard Python expressions [1][2].
+>
+> By following these steps, you can effectively test your FastAPI endpoints.
+>
+> `20 retrieved, 16 used, 4 dropped, 2 cited | 4 457 context chars`
+
+The shipped path spends its budget on 13 units that leave out the testing page's
+opening, and refuses. α 0.5 keeps them and answers, but without the code example
+`ragas-k5` had: a shorter unit still wins the budget over a 900-character fence.
+
+## Task 9 — the rule, read against `ragas-d20-a0`
+
+Part B, all three clauses or no promotion: (1) faithfulness ≥ 0.860 − 0.01 =
+**0.850**; (2) relevancy ≥ 0.705 + 0.03 = **0.735**; (3) no category loses more
+than 0.05 relevancy, `code` named. Noise from the repeated control:
+faithfulness 0.031, relevancy 0.005.
+
+| α | clause 1 (faith ≥ 0.850) | clause 2 (relev ≥ 0.735) | clause 3 (no category −0.05) | verdict |
+|---|---|---|---|---|
+| 0.5 | 0.771 — **fail** (−0.089, beyond noise) | 0.661 — **fail** (−0.044) | `multi_doc` −0.328 — **fail** (`code` +0.124) | not promoted |
+| 1.0 | 0.782 — **fail** (−0.078, beyond noise) | 0.605 — **fail** (−0.100) | `multi_doc` −0.335, `conceptual` −0.138, `exact` −0.083 — **fail** (`code` +0.109) | not promoted |
+| −0.5 | 0.868 — pass, within noise | 0.679 — **fail** (−0.026) | `code` −0.102, `conceptual` −0.074 — **fail** | not promoted |
+
+**No α clears the rule. `compress_length_penalty` stays 0.0.**
+
+**The pre-registered prediction was wrong.** The design predicted α > 0 would
+fail clause 3 *on `code`*, because dividing by length charges the
+900-character fences even more than raw cosine does. The opposite happened: α 0.5
+lifts `code` from 0.725 to **0.849** and brings `q018` back (0.910). It fails
+clause 3 on **`multi_doc`**, which falls from 0.812 to 0.484 — back to where
+`ragas-k5` had it (0.478). The length penalty does not trade quality for brevity
+across the board: it trades `multi_doc`'s recall gain for `code`'s answers. The
+wider pool helps multi-document questions because it can afford several
+medium-sized units from different pages; a penalty that prefers short units
+spends the budget on fragments and loses the breadth. α −0.5, which prefers long
+units, does the reverse and costs `code` 0.102. Neither direction improves on
+the unpenalised compressor, and one exponent cannot resolve the tension.
+
+Faithfulness falls under both positive α (0.771, 0.782) by more than the
+repeated control's 0.031, alongside shorter answers (p50 458 → 380 → 337) and a
+higher refusal rate (0.211 → 0.263 → 0.316). Task 5 measured faithfulness at
+0.857 on refusals, so part of the drop is the refusals themselves; the rest is
+answers built from fragments.
