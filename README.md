@@ -75,12 +75,7 @@ Fonctionnalités disponibles :
 
 ## Chunking
 
-Découpage récursif par caractères, écrit à la main : on coupe sur le séparateur le plus sémantique qui tient (`
-## `, `
-### `, `
-
-`, `
-`, `. `, ` `), et on descend d'un cran pour les morceaux encore trop longs. Le séparateur vide final garantit la terminaison sur un bloc sans aucune coupure possible.
+Découpage récursif par caractères, écrit à la main : on coupe sur le séparateur le plus sémantique qui tient (`, `. `, ` `), et on descend d'un cran pour les morceaux encore trop longs. Le séparateur vide final garantit la terminaison sur un bloc sans aucune coupure possible.
 
 Paramètres de référence — `chunk_size=1000`, `overlap=200`, en **caractères** et non en tokens (≈ 4 caractères par token en prose anglaise, moins en code).
 
