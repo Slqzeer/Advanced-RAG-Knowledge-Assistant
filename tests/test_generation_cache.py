@@ -35,6 +35,7 @@ UNKEYED = {
     "openai_api_key",
     "cohere_api_key",
     "generation_api_key",
+    "embedding_api_key",
     "judge_model",
     "judge_embedding_model",
 }

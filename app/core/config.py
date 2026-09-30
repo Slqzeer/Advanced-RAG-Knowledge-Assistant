@@ -28,6 +28,17 @@ class Settings(BaseSettings):
     cohere_api_key: str | None = None
     embedding_model: str = "text-embedding-3-small"
     embedding_cache_path: Path = Path("data/processed/embeddings.sqlite")
+    # Embeddings only, and only when set: an OpenAI-wire-compatible gateway for
+    # the embedding provider, independent of the generation one. Empty is direct
+    # to OpenAI, exactly as the cache was built.
+    embedding_base_url: str = ""
+    # The gateway's own credential. Falls back to OPENAI_API_KEY when unset.
+    embedding_api_key: str | None = None
+    # The id the gateway expects for embedding_model (github/text-embedding-3-small
+    # on OmniRoute). Sent to the provider; the cache keeps keying on
+    # embedding_model, which names what the vectors are. Only safe for a route
+    # that returns the cached vectors: `pytest -m requires_api` checks it.
+    embedding_provider_model: str = ""
     generation_model: str = "gpt-4o-mini"
     # Generation only, and only when set: an OpenAI-wire-compatible gateway
     # (OpenRouter, a local server) for the generator, leaving embeddings on

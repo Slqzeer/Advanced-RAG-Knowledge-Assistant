@@ -19,7 +19,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
 DEFAULT_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 DEFAULT_CACHE_PATH = Path(os.getenv("EMBEDDING_CACHE_PATH", "data/processed/embeddings.sqlite"))
@@ -88,16 +88,28 @@ def build_client(*, base_url: str = "", api_key: str | None = None) -> OpenAI:
     """The provider client, keyed from the settings — which read ``.env`` — and
     falling back to ``OPENAI_API_KEY`` in the environment when there is none.
 
-    ``base_url`` and ``api_key`` exist for one caller: ``generation.llm.complete``
-    pointing at an OpenAI-wire-compatible gateway. Embeddings never pass them —
-    the sqlite cache is keyed by model name alone, so two providers answering to
-    ``text-embedding-3-small`` would silently share one set of vectors.
+    ``base_url`` and ``api_key`` route to an OpenAI-wire-compatible gateway:
+    ``generation.llm.complete`` passes the generation pair, ``embedding_client``
+    the embedding pair. Neither leaks into the other.
     """
     return OpenAI(
         api_key=api_key or get_settings().openai_api_key,
         base_url=base_url or None,
         max_retries=MAX_RETRIES,
     )
+
+
+def embedding_client(settings: Settings) -> OpenAI:
+    """The embedding provider: direct to OpenAI, or EMBEDDING_BASE_URL when set."""
+    return build_client(base_url=settings.embedding_base_url, api_key=settings.embedding_api_key)
+
+
+def _provider_model(model: str, settings: Settings) -> str:
+    """The id sent for ``model``. A gateway may name the configured model
+    differently; the cache still keys on ``model``, what the vectors are."""
+    if settings.embedding_provider_model and model == settings.embedding_model:
+        return settings.embedding_provider_model
+    return model
 
 
 def embed_texts(
@@ -125,12 +137,14 @@ def embed_texts(
     # dict, not list: duplicate texts collapse to one entry, first-seen order kept.
     pending = {key: text for key, text in zip(keys, texts, strict=True) if key not in vectors}
     if pending:
-        client = client or build_client()
+        settings = get_settings()
+        client = client or embedding_client(settings)
+        sent = _provider_model(model, settings)
         fresh: dict[str, list[float]] = {}
         items = list(pending.items())
         for start in range(0, len(items), batch_size):
             batch = items[start : start + batch_size]
-            response = client.embeddings.create(input=[t for _, t in batch], model=model)
+            response = client.embeddings.create(input=[t for _, t in batch], model=sent)
             # Sorted by index because the response order is the provider's promise,
             # not ours to assume.
             data = sorted(response.data, key=lambda datum: datum.index)
