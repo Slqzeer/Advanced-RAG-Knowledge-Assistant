@@ -246,6 +246,7 @@ def test_the_embedding_route_is_its_own_setting() -> None:
     assert client.api_key == "gw"
     direct = embedding_client(Settings(_env_file=None, openai_api_key="k"))
     assert "api.openai.com" in str(direct.base_url)
+    assert direct.api_key == "k"
 
 
 def test_the_gateway_model_id_is_sent_and_the_cache_keeps_the_canonical_name(

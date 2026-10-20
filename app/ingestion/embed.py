@@ -101,7 +101,10 @@ def build_client(*, base_url: str = "", api_key: str | None = None) -> OpenAI:
 
 def embedding_client(settings: Settings) -> OpenAI:
     """The embedding provider: direct to OpenAI, or EMBEDDING_BASE_URL when set."""
-    return build_client(base_url=settings.embedding_base_url, api_key=settings.embedding_api_key)
+    return build_client(
+        base_url=settings.embedding_base_url,
+        api_key=settings.embedding_api_key or settings.openai_api_key,
+    )
 
 
 def _provider_model(model: str, settings: Settings) -> str:
