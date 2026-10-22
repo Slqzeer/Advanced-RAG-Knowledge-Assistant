@@ -300,3 +300,27 @@ def test_clear_cache_removes_the_prefix_and_nothing_else(client: Redis) -> None:
     assert clear_cache(connect(_settings())) == 3  # two answers and the vector set
     assert client.get("someone-else") == b"1"
     assert not client.exists(QVEC)
+
+
+@pytest.mark.parametrize("threshold", [None, 0.9])
+def test_a_cache_embedding_failure_does_not_discard_the_answer(threshold):
+    from unittest.mock import Mock
+
+    client = Mock(spec=Redis)
+    client.get.return_value = None
+    calls = []
+
+    def broken_embedder(question):
+        raise RuntimeError("embedding provider unavailable")
+
+    answer = cached_answer(
+        "q",
+        client=client,
+        settings=Settings(_env_file=None, cache_semantic_threshold=threshold),
+        embedder=broken_embedder,
+        answerer=_answerer(calls),
+    )
+    assert answer.answer == "answer to q"
+    assert calls == ["q"]
+    assert len(answer.warnings) == 1
+    assert "cache" in answer.warnings[0]

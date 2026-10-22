@@ -12,7 +12,10 @@ The single place that answers: where is this project, what comes next, and why.
 (RAGAS) says the compressor's recall gain is a real quality gain on average —
 relevancy 0.649 → 0.705, eleven times its measured noise — and a real loss on `q018`,
 0.883 → 0.000; no length penalty resolves both. Step 22 (guardrails) is merged and
-neither of its defences earned its switch. Step 23 (cache) is next, and it inherits
+neither of its defences earned its switch. Step 23 (cache) is in progress: its
+approved fixture and semantic sweep are complete; Rule S fails (0/38 paraphrase
+hits at 0.899832). The exact replay is implemented but blocked on the generation
+gateway. It inherits
 a judge too slow to run per query and a faithfulness score that moves 0.031 between
 identical runs.**
 
@@ -86,7 +89,7 @@ Four things later steps own:
 | 20 | Phase 9 — Compression | `v1.0` | Same answer quality, fewer context tokens. **Done, and the brief was wrong twice over: the tokens went *up* 11 %, and the win is recall, not cost.** A 20-chunk pool compressed into the budget 5 whole chunks occupied moves Recall@context 0.721 → **0.814** (ceiling 0.836), `multi_doc` 0.552 → **0.792**, refusal 0.316 → **0.211**, +79 ms. First pre-registered rule met in five steps; `COMPRESS_METHOD=embedding`. |
 | 21 | Phase 11 — RAGAS | `v1.1` | Faithfulness and answer relevance, not just retrieval. **Done — the judge agrees with Recall@context on average and disagrees on `q018`.** The compressed pool lifts relevancy 0.649 → **0.705** (noise 0.005) with faithfulness flat, all of it from `multi_doc` (0.478 → 0.812), while `q018` falls 0.883 → **0.000**. No length penalty clears the rule: α 0.5 wins `code` (0.849) and loses `multi_doc` (0.484), the reverse of the pre-registered prediction; `COMPRESS_LENGTH_PENALTY` stays 0.0. |
 | 22 | Phase 12 — Guardrails | `v1.6` | Refuses when retrieval is weak; survives injected instructions in documents. **Done, and the brief lost twice.** The score gate fails offline (0 of 7 caught), and every one of the 8 answerable refusals had a relevant document in context. Prompt v2 already holds 79 of 80 planted attacks, so prompt v3 and the detector have nothing to defend: both stay off. The one shipped change is `Answer.refusal`. |
-| 23 | Phase 13 — Cache | `v1.4` | Cache-hit latency and cost deltas. |
+| 23 | Phase 13 ? Cache | pending | Exact cache implemented; Rule S failed (0/38 at 0.899832), semantic disabled. Cold/exact latency and cost replay pending gateway recovery. |
 | 24 | Phase 15 — Observability | `v1.5` | Per-query trace: scores, prompt, tokens, latency, cost. |
 | 25 | Phase 14 — FastAPI | `v1.0` | `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`. |
 | 26-28 | Phase 16-17 — Docker, tests, CI | `v1.0` | `docker compose up` and a green pipeline with RAG regression gates. |
@@ -100,7 +103,7 @@ lands rather than promised here. Step 21 took **`v1.1`**.
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-22:
+Detailed, executable plans exist for steps 02-23:
 
 | Step | Plan |
 |---|---|
@@ -122,8 +125,9 @@ Detailed, executable plans exist for steps 02-22:
 | 20 Contextual compression | [`2026-09-13-step-20-compression.md`](superpowers/plans/2026-09-13-step-20-compression.md), design: [`2026-09-13-compression-design.md`](superpowers/specs/2026-09-13-compression-design.md), transcripts: [`transcripts-step-20.md`](superpowers/plans/transcripts-step-20.md) |
 | 21 RAGAS | [`2026-09-14-step-21-ragas.md`](superpowers/plans/2026-09-14-step-21-ragas.md), design: [`2026-09-14-ragas-design.md`](superpowers/specs/2026-09-14-ragas-design.md), transcripts: [`transcripts-step-21.md`](superpowers/plans/transcripts-step-21.md) |
 | 22 Guardrails | [`2026-09-18-step-22-guardrails.md`](superpowers/plans/2026-09-18-step-22-guardrails.md), design: [`2026-09-17-guardrails-design.md`](superpowers/specs/2026-09-17-guardrails-design.md) |
+| 23 Cache | [`2026-09-30-step-23-cache.md`](superpowers/plans/2026-09-30-step-23-cache.md), design: [`2026-09-30-cache-design.md`](superpowers/specs/2026-09-30-cache-design.md) |
 
-**Steps 23-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: whether a score floor can carry refusal at all, what a cache key has to include. Writing those plans now would mean inventing the answers — steps 12-20 each answered their own question only by running it, four of them answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with step 11's numbers in hand.
+**Steps 24-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: whether a score floor can carry refusal at all, what a cache key has to include. Writing those plans now would mean inventing the answers — steps 12-20 each answered their own question only by running it, four of them answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with step 11's numbers in hand.
 
 ## How a step lands
 

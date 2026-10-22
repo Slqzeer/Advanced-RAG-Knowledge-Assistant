@@ -16,7 +16,6 @@ from typing import Any
 
 from pydantic import ValidationError
 from redis import Redis
-from redis.exceptions import RedisError
 
 from app.core.config import Settings, get_settings
 from app.generation.answer import answer_question
@@ -203,7 +202,8 @@ def cached_answer(
         hit, layer = _stored(client, key), "exact"
         if hit is None and indexable and threshold is not None:
             hit, layer = _nearest(client, vector(), fp, threshold), "semantic"
-    except RedisError as error:
+    except Exception as error:
+        # Optional cache work includes embedding API and SQLite calls, not just Redis.
         answer = answerer(question, history=history, settings=settings, **kwargs)
         return _warned(answer, f"cache lookup failed, answered without it: {error}")
     if hit is not None:
@@ -229,7 +229,7 @@ def cached_answer(
                 "SETATTR",
                 json.dumps({"fp": fp}),
             )
-    except RedisError as error:
+    except Exception as error:
         return _warned(answer, f"cache store failed: {error}")
     return answer
 

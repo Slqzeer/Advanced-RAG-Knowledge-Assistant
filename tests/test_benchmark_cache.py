@@ -31,3 +31,31 @@ def test_sweep_counts_a_paraphrase_nearer_the_wrong_anchor_as_false(monkeypatch)
 def test_cosine_rejects_different_dimensions():
     with pytest.raises(ValueError):
         bench.cosine([1.0, 0.0], [1.0])
+
+
+def test_exact_verdict_checks_answer_identity_and_refusals(monkeypatch, tmp_path):
+    import json
+
+    history = tmp_path / "cache.jsonl"
+    history.write_text(
+        json.dumps(
+            {
+                "label": "cache-cold",
+                "per_probe": [
+                    {"id": "a", "answer": "original", "refusal": None},
+                    {"id": "b", "answer": "refused", "refusal": "no_context"},
+                ],
+            }
+        )
+        + "\n"
+    )
+    monkeypatch.setattr(bench, "HISTORY", history)
+    row = {"hit_p50_ms": 10, "per_probe": [{"id": "a", "answer": "original", "cache": "exact"}]}
+    assert bench.verdicts("exact", row) == {"rule_e": True, "stored": 1, "cold_refusals": 1}
+    row["per_probe"][0]["answer"] = "changed"
+    assert bench.verdicts("exact", row)["rule_e"] is False
+
+
+def test_cold_verdict_needs_no_history(monkeypatch, tmp_path):
+    monkeypatch.setattr(bench, "HISTORY", tmp_path / "absent.jsonl")
+    assert bench.verdicts("cold", {}) == {}

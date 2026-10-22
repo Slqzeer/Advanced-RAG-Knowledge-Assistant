@@ -21,6 +21,7 @@
 - [Transformations de requête — réécriture, conversation et expansion](#transformations-de-requête--réécriture-conversation-et-expansion)
 - [Évaluation de la génération — étape 21](#évaluation-de-la-génération--étape-21--ragas-et-ce-que-recallcontext-ne-voyait-pas)
 - [Garde-fous — étape 22](#garde-fous--étape-22--le-refus-devient-un-champ-et-aucune-défense-ne-gagne-sa-place)
+- [Cache ? ?tape 23](#cache--?tape-23--exact-disponible-s?mantique-rejet?)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -1772,6 +1773,69 @@ plafond passe à 60 s (`05992e9`).
 | Re-lancer `inj-v2` et `inj-v2-detect` sans cache | quand un générateur laissera passer au moins 4 attaques : d'ici là, aucune relance ne peut changer un verdict |
 | Durcir v3 ou les motifs de `guard.py` | même raison — il n'y a rien à rattraper sur ce modèle |
 | Modifier `data/eval/questions.jsonl` | jamais : le jeu est figé depuis l'étape 10 |
+
+## Cache ? ?tape 23 : exact disponible, s?mantique rejet?
+
+`app/generation/cache.py` enveloppe `answer_question()` : cl? exacte SHA-256 sur la
+question, l'historique et les param?tres qui modifient la r?ponse ; Redis 8 conserve
+les r?ponses pendant sept jours. Les refus ne sont jamais stock?s. La r?indexation
+vide le cache. Les benchmarks de qualit? continuent d'appeler `answer_question()`
+directement. Une erreur du cache, y compris de son fournisseur d'embeddings, rend
+la r?ponse avec un avertissement.
+
+Le cache d'embeddings sqlite existe d?j?. Un cache de retrieval suppl?mentaire
+n'est pas construit : les ~35 ms de recherche chaude ne sont pas les secondes
+consomm?es par la g?n?ration.
+
+### R?gle S : aucune paraphrase ne passe
+
+Les 83 sondes ont ?t? approuv?es puis gel?es dans un commit distinct avant la
+cr?ation du script. Le 22 octobre 2026, les embeddings OpenAI directs ont pass? le
+contr?le de compatibilit? avec les vecteurs existants (cosinus ? 0,9999).
+Le sweep compare chaque sonde aux **38 ancres**, pas seulement ? la sienne.
+
+| Type | Minimum | M?diane | p95 | Maximum |
+|---|---:|---:|---:|---:|
+| Paraphrase | 0,223 | 0,538 | 0,674 | 0,729 |
+| Near-miss | 0,354 | 0,711 | 0,863 | 0,880 |
+| Hors corpus | 0,291 | 0,390 | 0,471 | 0,471 |
+
+Cosinus avec l'ancre pr?vue. **9 paraphrases** sont plus proches d'une autre ancre.
+Le plus haut faux hit potentiel vaut **0,879832** ; avec la marge pr?-enregistr?e
+0,02, le seuil candidat vaut **0,899832**. Z?ro faux hit sur les 54 cas concern?s
+(45 sondes n?gatives et 9 mauvaises ancres), mais **0/38 paraphrases touchent**,
+contre au moins 19 exig?es. Les 38 sont sous le plus haut faux hit potentiel.
+
+**R?gle S ?chou?e : `CACHE_SEMANTIC_THRESHOLD` reste absent (`None`).** La clause
+z?ro faux hit est satisfaite par construction sur cette fixture ; ce n'est pas une
+validation sur un jeu ind?pendant. Aucun bras s?mantique n'est ex?cut? puisque la
+r?gle ?choue. R?sultats bruts : [`data/eval/cache.jsonl`](data/eval/cache.jsonl).
+
+### Mesure exacte en attente
+
+Les bras froid et exact sont impl?ment?s. La premi?re tentative froide n'a termin?
+aucune r?ponse : OmniRoute ne r?pondait plus, y compris sur son endpoint de liste
+des mod?les. Elle a ?t? interrompue ; aucune mesure compl?te n'est publi?e pour
+ces bras et la r?gle E n'a pas encore de verdict.
+
+```bash
+uv run python scripts/benchmark_cache.py --sweep
+uv run python scripts/benchmark_cache.py --arm cold --usd-per-mtok-in 0.15 --usd-per-mtok-out 0.60
+uv run python scripts/benchmark_cache.py --arm exact --usd-per-mtok-in 0.15 --usd-per-mtok-out 0.60
+```
+
+D?finir `REDIS_URL` avant les bras ; en local : `docker compose up -d redis`.
+Un label de bras d?j? enregistr? est refus? pour ?viter une d?pense en double.
+Les prix GPT-4o-mini de r?f?rence sont 0,15 $ / million de tokens entrants et
+0,60 $ / million sortants ([source OpenAI](https://developers.openai.com/api/docs/models/gpt-4o-mini),
+consult?e le 22 octobre 2026). Ils ne sont pas la facture r?elle d'OmniRoute et
+n'incluent pas les embeddings.
+
+Les suivis de conversation n'utilisent que le cache exact. **Hypoth?se, pas mesure :**
+un hit s?mantique sur un suivi demande d'abord de r?soudre l'historique (un appel LLM,
+~1?2 s), avant de savoir s'il touche, et nous pensons les suivis r?p?t?s rares.
+Il n'y a pas encore de trafic pour le mesurer ; la trace par requ?te de l'?tape 24
+pourra les compter.
 
 ## Premiers constats
 
