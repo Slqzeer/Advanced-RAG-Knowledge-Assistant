@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str | None = None
     qdrant_collection: str = "chunks"
     # Not required: the test suite and every ingestion-free command must import
     # this module without a key present.
@@ -134,6 +135,8 @@ class Settings(BaseSettings):
     cache_ttl_s: int = 604800
     # Cosine, not VSIM's (1 + cosine) / 2 score. None is off. Set only if Rule S
     # passes on data/eval/cache_pairs.jsonl.
+    # Rule S failed: all 38 paraphrases fall below the highest false-hit cosine
+    # (0.8798); none reaches the candidate threshold (0.8998).
     cache_semantic_threshold: float | None = None
     corpus_dir: Path = Path("data/raw")
 

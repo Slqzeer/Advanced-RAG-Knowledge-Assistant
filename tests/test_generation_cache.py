@@ -27,6 +27,7 @@ from app.models.answers import Answer, RetrievalStats
 # a decision a reviewer should see in this diff.
 UNKEYED = {
     "qdrant_url",
+    "qdrant_api_key",
     "redis_url",
     "cache_ttl_s",
     "cache_semantic_threshold",

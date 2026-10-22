@@ -1,10 +1,11 @@
 import uuid
 from collections.abc import Iterator
+from unittest.mock import patch
 
 import pytest
 from qdrant_client import QdrantClient
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.models.chunks import Chunk
 from app.retrieval.store import (
     INDEXED_FIELDS,
@@ -38,6 +39,13 @@ VECTORS = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
 
 
 # --- no server needed ------------------------------------------------------
+
+
+def test_client_passes_the_configured_api_key() -> None:
+    settings = Settings(_env_file=None, qdrant_api_key="test-key")
+    with patch("app.retrieval.store.QdrantClient") as constructor:
+        assert get_client(settings) is constructor.return_value
+    constructor.assert_called_once_with(url=settings.qdrant_url, api_key="test-key")
 
 
 def test_point_id_is_deterministic() -> None:
