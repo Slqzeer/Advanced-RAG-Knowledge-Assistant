@@ -95,3 +95,9 @@ def test_a_rejected_refusal_reason_cannot_be_constructed() -> None:
     has the numbers. A value nothing can produce must not be representable."""
     with pytest.raises(ValidationError):
         make_answer(refusal="weak_retrieval")
+
+
+def test_an_answer_is_uncached_unless_it_says_so() -> None:
+    answer = make_answer()
+    assert answer.cache is None
+    assert answer.model_copy(update={"cache": "semantic"}).cache == "semantic"

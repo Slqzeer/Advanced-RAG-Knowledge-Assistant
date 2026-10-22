@@ -25,7 +25,8 @@ BATCH_SIZE = 256
 
 
 def get_client(settings: Settings | None = None) -> QdrantClient:
-    return QdrantClient(url=(settings or get_settings()).qdrant_url)
+    settings = settings or get_settings()
+    return QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
 
 
 def point_id(chunk_id: str) -> str:

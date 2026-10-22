@@ -16,8 +16,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fetch_corpus import SOURCES  # noqa: E402 - sibling script, after the path fix
+from redis.exceptions import RedisError  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
+from app.generation.cache import clear_cache  # noqa: E402
 from app.ingestion.chunk import STRATEGIES, chunk_documents  # noqa: E402
 from app.ingestion.clean import clean_document  # noqa: E402
 from app.ingestion.embed import EmbeddingCache, embed_texts  # noqa: E402
@@ -96,6 +98,14 @@ def main() -> int:
     ensure_collection(client, collection, len(vectors[0]), recreate=args.recreate)
     count = upsert_chunks(client, collection, chunks, vectors)
     stage("upsert", count, started)
+    # The one place the index changes, so the one place cached answers go stale.
+    # A dead Redis must not fail an index run that already succeeded.
+    try:
+        cleared = clear_cache(settings=settings)
+        if cleared:
+            print(f"  cache      {cleared} keys cleared")
+    except RedisError as error:
+        print(f"  cache      NOT cleared ({error}); run clear_cache() before trusting it")
 
     stats = collection_stats(client, collection)
     print(

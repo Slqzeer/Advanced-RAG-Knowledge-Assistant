@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings>=2.10,<3",
     "qdrant-client>=1.15,<2",
     "ragas>=0.4,<0.5",
+    "redis>=6,<8",
     "uvicorn[standard]>=0.35,<1",
 ]
 
@@ -58,6 +59,7 @@ markers = [
     "requires_qdrant: needs a running Qdrant (docker compose up -d qdrant)",
     "requires_model: downloads and loads local ONNX weights (FlashRank, fastembed)",
     "requires_api: spends real judge calls against the OpenAI API",
+    "requires_redis: needs a running Redis 8 (docker compose up -d redis); uses database 15",
 ]
 pythonpath = ["."]
 testpaths = ["tests"]

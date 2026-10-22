@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.config import Settings, get_settings
+from app.evaluation.dataset import load_dataset
 from app.ingestion.embed import (
     DEFAULT_MODEL,
     MAX_RETRIES,
@@ -11,6 +13,7 @@ from app.ingestion.embed import (
     cache_key,
     embed_query,
     embed_texts,
+    embedding_client,
 )
 
 # --- the cache -------------------------------------------------------------
@@ -210,3 +213,76 @@ def test_the_generation_gateway_overrides_do_not_touch_embeddings(
     assert str(routed.base_url).rstrip("/") == "https://openrouter.ai/api/v1"
     assert routed.api_key == "gateway-key"
     assert "openrouter" not in str(build_client().base_url)
+    gateway_for_generation = Settings(
+        _env_file=None, openai_api_key="k", generation_base_url="https://openrouter.ai/api/v1"
+    )
+    assert "openrouter" not in str(embedding_client(gateway_for_generation).base_url)
+
+
+# --- the embedding route -----------------------------------------------------
+
+
+class RecordingClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.models: list[str] = []
+
+    def create(self, *, input: list[str], model: str, **kwargs: object) -> SimpleNamespace:
+        self.models.append(model)
+        return super().create(input=input, model=model, **kwargs)
+
+
+def _route(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
+    settings = Settings(_env_file=None, **overrides)  # type: ignore[arg-type]
+    monkeypatch.setattr("app.ingestion.embed.get_settings", lambda: settings)
+
+
+def test_the_embedding_route_is_its_own_setting() -> None:
+    routed = Settings(
+        _env_file=None, embedding_base_url="http://localhost:20128/v1", embedding_api_key="gw"
+    )
+    client = embedding_client(routed)
+    assert str(client.base_url).rstrip("/") == "http://localhost:20128/v1"
+    assert client.api_key == "gw"
+    direct = embedding_client(Settings(_env_file=None, openai_api_key="k"))
+    assert "api.openai.com" in str(direct.base_url)
+    assert direct.api_key == "k"
+
+
+def test_the_gateway_model_id_is_sent_and_the_cache_keeps_the_canonical_name(
+    monkeypatch: pytest.MonkeyPatch, cache: EmbeddingCache
+) -> None:
+    _route(monkeypatch, embedding_provider_model="github/text-embedding-3-small")
+    client = RecordingClient()
+    embed_texts(["alpha"], model="text-embedding-3-small", cache=cache, client=client)
+    assert client.models == ["github/text-embedding-3-small"]
+    assert cache.get_many([cache_key("text-embedding-3-small", "alpha")])
+
+
+def test_any_other_model_is_sent_as_named(
+    monkeypatch: pytest.MonkeyPatch, cache: EmbeddingCache
+) -> None:
+    _route(monkeypatch, embedding_provider_model="github/text-embedding-3-small")
+    client = RecordingClient()
+    embed_texts(["alpha"], model="text-embedding-3-large", cache=cache, client=client)
+    assert client.models == ["text-embedding-3-large"]
+
+
+@pytest.mark.requires_api
+def test_the_configured_route_serves_the_vectors_already_cached(tmp_path: Path) -> None:
+    """The guard that replaces "embeddings never pass a base_url": a route may
+    share the cache only if it returns the vectors the cache already holds."""
+    settings = get_settings()
+    real = EmbeddingCache(settings.embedding_cache_path)
+    texts = [q.question for q in load_dataset(Path("data/eval/questions.jsonl"))[:3]]
+    cached = real.get_many([cache_key(settings.embedding_model, t) for t in texts])
+    if len(cached) < len(texts):
+        pytest.skip("the eval questions are not in the embedding cache")
+    fresh = embed_texts(
+        texts, model=settings.embedding_model, cache=EmbeddingCache(tmp_path / "fresh.sqlite")
+    )
+    for text, vector in zip(texts, fresh, strict=True):
+        reference = cached[cache_key(settings.embedding_model, text)]
+        dot = sum(a * b for a, b in zip(vector, reference, strict=True))
+        norm = (sum(a * a for a in vector) * sum(b * b for b in reference)) ** 0.5
+        assert dot / norm >= 0.9999, text

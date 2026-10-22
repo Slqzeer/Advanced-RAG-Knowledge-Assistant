@@ -21,6 +21,7 @@
 - [Transformations de requête — réécriture, conversation et expansion](#transformations-de-requête--réécriture-conversation-et-expansion)
 - [Évaluation de la génération — étape 21](#évaluation-de-la-génération--étape-21--ragas-et-ce-que-recallcontext-ne-voyait-pas)
 - [Garde-fous — étape 22](#garde-fous--étape-22--le-refus-devient-un-champ-et-aucune-défense-ne-gagne-sa-place)
+- [Cache — étape 23](#cache--étape-23--exact-disponible-sémantique-rejeté)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -39,6 +40,12 @@ Advanced RAG Knowledge Assistant est un projet d'apprentissage consacré à la c
 Le projet suit une règle simple : chaque amélioration du retrieval ou de la génération doit être justifiée par des mesures plutôt que par une impression subjective.
 
 ## État actuel
+
+**Étape 23 terminée — cache exact mesuré.** 30/30 réponses stockées rejouées à
+l'octet près, médiane 19,8 ms contre 2 622 ms pour ces mêmes questions générées ;
+coût génération du replay réduit de 83,1 %. Les 8 refus restent des misses.
+Le cache sémantique reste désactivé : 0/38 paraphrases passent la règle S.
+Prochaine étape : **24, observabilité**. [Mesures du cache](#cache--étape-23--exact-disponible-sémantique-rejeté).
 
 **Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
@@ -1773,6 +1780,92 @@ plafond passe à 60 s (`05992e9`).
 | Durcir v3 ou les motifs de `guard.py` | même raison — il n'y a rien à rattraper sur ce modèle |
 | Modifier `data/eval/questions.jsonl` | jamais : le jeu est figé depuis l'étape 10 |
 
+## Cache — étape 23 : exact disponible, sémantique rejeté
+
+`app/generation/cache.py` enveloppe `answer_question()` : clé SHA-256 sur la
+question, l'historique et les paramètres qui modifient la réponse ; Redis 8 conserve
+les réponses pendant sept jours. Les refus ne sont jamais stockés. La réindexation
+vide le cache. Les benchmarks de qualité appellent `answer_question()` directement.
+Une erreur du cache, y compris de son fournisseur d'embeddings, rend la réponse
+avec un avertissement.
+
+Le cache d'embeddings sqlite existe déjà. Un cache de retrieval supplémentaire
+n'est pas construit : les ~35 ms de recherche chaude ne sont pas les secondes
+consommées par la génération.
+
+### Règle S : aucune paraphrase ne passe
+
+Les 83 sondes ont été approuvées puis gelées dans un commit distinct avant la
+création du script. Le 22 octobre 2026, les embeddings OpenAI directs ont passé le
+contrôle de compatibilité avec les vecteurs existants (cosinus ≥ 0,9999).
+Le sweep compare chaque sonde aux **38 ancres**, pas seulement à la sienne.
+
+| Type | Minimum | Médiane | p95 | Maximum |
+|---|---:|---:|---:|---:|
+| Paraphrase | 0,223 | 0,538 | 0,674 | 0,729 |
+| Near-miss | 0,354 | 0,711 | 0,863 | 0,880 |
+| Hors corpus | 0,291 | 0,390 | 0,471 | 0,471 |
+
+Cosinus avec l'ancre prévue. **9 paraphrases** sont plus proches d'une autre ancre.
+Le plus haut faux hit potentiel vaut **0,879832** ; avec la marge pré-enregistrée
+0,02, le seuil candidat vaut **0,899832**. Zéro faux hit sur les 54 cas concernés
+(45 sondes négatives et 9 mauvaises ancres), mais **0/38 paraphrases touchent**,
+contre au moins 19 exigées. Les 38 sont sous le plus haut faux hit potentiel.
+
+**Règle S échouée : `CACHE_SEMANTIC_THRESHOLD` reste absent (`None`).** La clause
+zéro faux hit est satisfaite par construction sur cette fixture ; ce n'est pas une
+validation sur un jeu indépendant. Aucun bras sémantique n'est exécuté puisque la
+règle échoue. Résultats bruts : [`data/eval/cache.jsonl`](data/eval/cache.jsonl).
+
+### Règle E : 30 réponses stockées, 30 hits identiques
+
+Après l'indisponibilité d'OmniRoute, les deux bras ont été exécutés le 22 octobre
+2026 via **OpenAI direct, `gpt-4o-mini`**, avec des paramètres de processus identiques.
+La configuration habituelle de génération reste sur OmniRoute. Qdrant et Redis
+8.2.9 sont distants, joints par Tailscale ; ces latences incluent ce transport.
+Le corpus contient 1 484 chunks `sentence`, embeddings `text-embedding-3-small`,
+prompt v2, compression `embedding` (20 candidats, budget 3 688 caractères).
+
+| Bras | Hits / misses | Hit p50 / p95 | Miss p50 / p95 | Tokens entrée / sortie facturables | Coût génération au tarif public |
+|---|---:|---:|---:|---:|---:|
+| `cache-cold` | 0 / 38 | — | 2 342 / 5 447 ms | 46 134 / 3 412 | 0,008967 $ |
+| `cache-exact` | 30 / 8 | 19,8 / 101,7 ms | 1 052 / 2 274 ms | 9 665 / 112 | 0,001517 $ |
+
+Les **8 refus à froid ne sont pas stockés** et sont donc recalculés au replay.
+Les 30 réponses stockées reviennent à l'octet près ; la médiane de leurs hits est
+inférieure à 50 ms : **règle E satisfaite**. Sur ces mêmes 30 questions, la médiane
+à froid était **2 622 ms**, soit un rapport de **132×**. Le p95 à 102 ms rappelle
+que le gain médian ne garantit pas chaque requête sous 50 ms.
+
+Les hits évitent **36 469 tokens entrants et 3 300 sortants** (en moyenne 1 216 et
+110 par hit). Le coût génération du replay baisse de **83,1 %**. Par miss : froid
+1 214 tokens entrants / 89,8 sortants et 0,000236 $ ; replay 1 208 / 14 et
+0,000190 $. Total des deux bras : **0,010484 $** au tarif public, hors embeddings.
+La tentative OmniRoute interrompue n'a produit aucune réponse complète et n'entre
+pas dans ces mesures ; son éventuelle facturation distante n'est pas connue.
+
+```bash
+uv run python scripts/benchmark_cache.py --sweep
+uv run python scripts/benchmark_cache.py --arm cold --usd-per-mtok-in 0.15 --usd-per-mtok-out 0.60
+uv run python scripts/benchmark_cache.py --arm exact --usd-per-mtok-in 0.15 --usd-per-mtok-out 0.60
+```
+
+Définir `REDIS_URL` avant les bras ; en local : `docker compose up -d redis`.
+Pour reproduire le fournisseur publié : `GENERATION_BASE_URL=https://api.openai.com/v1`,
+`GENERATION_MODEL=gpt-4o-mini` et la clé OpenAI dans `GENERATION_API_KEY`, dans les
+deux processus. Un label déjà enregistré est refusé pour éviter une dépense double.
+Les prix GPT-4o-mini de référence sont 0,15 $ / million de tokens entrants et
+0,60 $ / million sortants ([source OpenAI](https://developers.openai.com/api/docs/models/gpt-4o-mini),
+consultée le 22 octobre 2026). Ces montants ne sont pas une facture vérifiée et
+n'incluent pas les embeddings. Un futur run OmniRoute pourrait être facturé différemment.
+
+Les suivis de conversation n'utilisent que le cache exact. **Hypothèse, pas mesure :**
+un hit sémantique sur un suivi demande d'abord de résoudre l'historique (un appel LLM,
+~1–2 s), avant de savoir s'il touche, et nous pensons les suivis répétés rares.
+Il n'y a pas encore de trafic pour le mesurer ; la trace par requête de l'étape 24
+pourra les compter.
+
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -2017,7 +2110,7 @@ docker compose down
 - [x] **Phase 10 — Citations** : produire des réponses fondées et sourcées (faites, `v0.3`).
 - [x] **Phase 11 — Évaluation complète** : mesurer retrieval et génération (faite ; faithfulness et relevancy par RAGAS, le juge confirme Recall@context en moyenne — relevancy 0,649 → 0,705 — et le contredit sur `q018`, 0,883 → 0,000 ; `COMPRESS_LENGTH_PENALTY` reste 0,0).
 - [x] **Phase 12 — Guardrails** : gérer le manque de contexte et les entrées hostiles (faite ; `Answer.refusal` livré, seuil de score rejeté hors ligne — 0 sur 7 —, prompt v3 et détecteur mesurés et non activés : le prompt v2 tient déjà 79 attaques sur 80).
-- [ ] **Phase 13 — Cache** : réduire latence et coût.
+- [x] **Phase 13 — Cache** : cache exact mesuré (30/30 réponses identiques, p50 19,8 ms) ; sémantique rejeté (0/38 paraphrases).
 - [ ] **Phase 14 — API professionnelle** : exposer les opérations FastAPI.
 - [ ] **Phase 15 — Observabilité** : suivre scores, tokens, latence et coût.
 - [ ] **Phase 16 — Dockerisation** : conteneuriser l'application complète.

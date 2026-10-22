@@ -60,6 +60,30 @@ class EvalConversation(EvalQuestion):
     history: list[dict[str, str]] = []
 
 
+class CachePair(EvalQuestion):
+    """A probe for step 23's semantic cache and the question it may or may not hit.
+
+    ``question`` is the probe, and ``relevant_document_ids`` is *its own* ground
+    truth. That is what makes the fixture's one rule checkable: a paraphrase keeps
+    its anchor's documents, a near-miss does not keep both its documents and its
+    sections. The anchor's text is never copied here; ``anchor_id`` points into
+    the frozen question set.
+    """
+
+    anchor_id: str = Field(min_length=1)
+    kind: Literal["paraphrase", "near_miss", "unanswerable"]
+
+    @model_validator(mode="after")
+    def _check_kind(self) -> "CachePair":
+        # A near-miss may itself be unanswerable: a question the corpus cannot
+        # answer that looks like one it can.
+        if self.kind == "unanswerable" and self.category != "unanswerable":
+            raise ValueError("an unanswerable pair must have category 'unanswerable'")
+        if self.kind == "paraphrase" and self.category == "unanswerable":
+            raise ValueError("a paraphrase of an answerable question is never unanswerable")
+        return self
+
+
 def load_dataset(
     path: Path,
     *,

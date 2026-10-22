@@ -22,5 +22,21 @@ services:
       retries: 10
       start_period: 10s
 
+  redis:
+    image: redis:8.10.2
+    restart: unless-stopped
+    # A cache: nothing to persist, and volatile-lru evicts only keys with a TTL,
+    # so the vector set (no TTL) is never evicted wholesale.
+    command: >-
+      redis-server --maxmemory 256mb --maxmemory-policy volatile-lru
+      --save "" --appendonly no
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   qdrant_storage:

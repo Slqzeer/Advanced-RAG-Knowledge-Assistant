@@ -49,3 +49,10 @@ def test_keys_for_later_phases_are_ignored(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_get_settings_returns_the_same_object_twice() -> None:
     assert get_settings() is get_settings()
+
+
+def test_the_cache_is_off_by_default() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.redis_url == ""
+    assert settings.cache_ttl_s == 604800
+    assert settings.cache_semantic_threshold is None

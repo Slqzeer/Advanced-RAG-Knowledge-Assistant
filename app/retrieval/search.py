@@ -114,8 +114,8 @@ def parse_filters(pairs: Sequence[str]) -> dict[str, list[str]]:
 
 def default_embedder(settings: Settings) -> Embedder:
     """The same cache the corpus was embedded with: a repeated benchmark query
-    costs nothing. This is not a *retrieval* cache — step 23 adds that, once
-    there is a latency number worth improving."""
+    costs nothing. Step 23 also reuses it for the answer cache's lookup vector,
+    and did not build a retrieval cache: ~35 ms warm is the wrong 5 %."""
     cache = EmbeddingCache(settings.embedding_cache_path)
     return lambda text: embed_query(text, model=settings.embedding_model, cache=cache)
 

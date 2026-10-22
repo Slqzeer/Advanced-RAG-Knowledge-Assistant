@@ -1,8 +1,10 @@
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from app.evaluation.dataset import (
+    CachePair,
     EvalConversation,
     EvalQuestion,
     load_dataset,
@@ -133,3 +135,78 @@ def test_a_conversation_file_reports_the_same_line_numbered_errors(tmp_path: Pat
     path.write_text("{not json}\n", encoding="utf-8")
     with pytest.raises(ValueError, match=r"conversations\.jsonl:1"):
         load_dataset(path, model=EvalConversation)
+
+
+# --- step 23's cache pairs -----------------------------------------------------
+
+CACHE_PAIRS = Path("data/eval/cache_pairs.jsonl")
+QUESTIONS = Path("data/eval/questions.jsonl")
+
+
+def _pairs() -> list[CachePair]:
+    return [p for p in load_dataset(CACHE_PAIRS, model=CachePair) if isinstance(p, CachePair)]
+
+
+def test_cache_pairs_have_the_pre_registered_shape() -> None:
+    pairs = _pairs()
+    assert Counter(p.kind for p in pairs) == {"paraphrase": 38, "near_miss": 38, "unanswerable": 7}
+
+
+def test_every_answerable_question_anchors_one_paraphrase_and_one_near_miss() -> None:
+    answerable = {
+        q.question_id
+        for q in load_dataset(QUESTIONS)
+        if not q.held_out and q.category != "unanswerable"
+    }
+    for kind in ("paraphrase", "near_miss"):
+        anchors = [p.anchor_id for p in _pairs() if p.kind == kind]
+        assert sorted(anchors) == sorted(answerable), kind
+
+
+def test_a_paraphrase_keeps_the_answer_and_a_near_miss_changes_it() -> None:
+    questions = {q.question_id: q for q in load_dataset(QUESTIONS)}
+    for pair in _pairs():
+        anchor = questions[pair.anchor_id]
+        same = sorted(pair.relevant_document_ids) == sorted(
+            anchor.relevant_document_ids
+        ) and sorted(pair.relevant_sections) == sorted(anchor.relevant_sections)
+        if pair.kind == "paraphrase":
+            assert sorted(pair.relevant_document_ids) == sorted(anchor.relevant_document_ids)
+        elif pair.kind == "near_miss":
+            assert not same, f"{pair.question_id} has its anchor's answer"
+        assert pair.question.strip() != anchor.question.strip(), pair.question_id
+
+
+def test_unanswerable_pairs_are_the_frozen_out_of_corpus_questions() -> None:
+    questions = load_dataset(QUESTIONS)
+    out_of_corpus = {
+        q.question for q in questions if q.category == "unanswerable" and not q.held_out
+    }
+    answerable = {q.question_id for q in questions if q.category != "unanswerable"}
+    pairs = [p for p in _pairs() if p.kind == "unanswerable"]
+    assert {p.question for p in pairs} == out_of_corpus
+    assert all(p.anchor_id in answerable for p in pairs)
+
+
+def test_an_unanswerable_pair_must_be_in_the_unanswerable_category() -> None:
+    with pytest.raises(ValueError, match="unanswerable"):
+        CachePair(
+            question_id="c1",
+            question="x",
+            category="code",
+            relevant_document_ids=["d"],
+            anchor_id="q001",
+            kind="unanswerable",
+        )
+
+
+def test_a_paraphrase_is_never_unanswerable() -> None:
+    with pytest.raises(ValueError, match="paraphrase"):
+        CachePair(
+            question_id="c1",
+            question="x",
+            category="unanswerable",
+            relevant_document_ids=[],
+            anchor_id="q001",
+            kind="paraphrase",
+        )
