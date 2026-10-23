@@ -1,0 +1,1 @@
+{"label": "observability-jsonl", "timestamp": "2026-10-23T01:56:22.640600+00:00", "git_commit": "d12e9c45400507756382c7c3cfcc5b24d176c8ce", "writes": 1000, "valid_lines": 1000, "p50_ms": 0.4458499970496632, "p95_ms": 0.8372850010346155, "bytes_per_trace": 7588.0, "total_bytes": 7588000, "rule_o": true}

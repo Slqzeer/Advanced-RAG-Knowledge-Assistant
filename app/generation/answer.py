@@ -20,6 +20,7 @@ from app.generation.guard import detect_injection
 from app.generation.llm import SYSTEM_PROMPTS, USER_TEMPLATE, Completer, complete
 from app.models.answers import Answer, RetrievalStats
 from app.models.chunks import ScoredChunk
+from app.observability.trace import QueryRecorder, record_answer, record_failure
 from app.retrieval.search import Filters, search
 from app.retrieval.transform import contextualize
 
@@ -54,6 +55,7 @@ def answer_question(
     settings: Settings | None = None,
     retriever: Retriever | None = None,
     llm: Completer | None = None,
+    trace: QueryRecorder | None = None,
 ) -> Answer:
     """Answer ``question`` from the indexed corpus, or admit that it cannot.
 
@@ -107,12 +109,27 @@ def answer_question(
     retriever = retriever or search
     llm = llm or complete
     started = time.perf_counter()
+    owns_trace = trace is None and settings.trace_path is not None
+    if owns_trace:
+        trace = QueryRecorder(
+            question,
+            history or [],
+            settings,
+            mode=mode,
+            transform=transform,
+            rerank=rerank,
+            compress=compress,
+            top_k=top_k,
+        )
 
     # Before retrieval and above search(): resolving a follow-up needs the
     # conversation, and pushing that into the retrieval seam would carry it on
     # into step 23's cache key and step 25's endpoint. With no history this
     # returns the question and makes no call.
+    stage_started = time.perf_counter()
     query = contextualize(question, history or [], settings=settings, llm=llm)
+    if trace:
+        trace.resolved(query, (time.perf_counter() - stage_started) * 1000)
 
     method = settings.compress_method if compress is None else compress
     wanted = top_k or settings.top_k
@@ -124,68 +141,102 @@ def answer_question(
             # choose between; the same guard search() applies to rerank_candidates.
             raise ValueError(f"compress_candidates ({depth}) must be at least top_k ({wanted})")
 
-    chunks = retriever(
-        query,
-        top_k=depth,
-        mode=mode,
-        transform=transform,
-        transform_n=transform_n,
-        rerank=rerank,
-        rerank_candidates=rerank_candidates,
-        filters=filters,
-        settings=settings,
-    )
+    stage_started = time.perf_counter()
+    try:
+        chunks = retriever(
+            query,
+            top_k=depth,
+            mode=mode,
+            transform=transform,
+            transform_n=transform_n,
+            rerank=rerank,
+            rerank_candidates=rerank_candidates,
+            filters=filters,
+            settings=settings,
+        )
+    except Exception as error:
+        if owns_trace and trace:
+            record_failure(trace, error)
+        raise
+    if trace:
+        trace.retrieved(chunks, (time.perf_counter() - stage_started) * 1000)
     # Counted before compression: how many chunks the retriever produced is a
     # retrieval fact, and a d20 run that compresses to seven must report 20.
     pool = len(chunks)
-    chunks = compress_chunks(
-        chunks,
-        query,
-        method=method,
-        budget_chars=compress_budget,
-        settings=settings,
-        embedder=embedder,
-    )
-    guard_warnings: list[str] = []
-    if settings.guard_detect:
-        # After compression, which rewrites chunk text: scanning before it would
-        # be scanning something the model never receives.
-        chunks, guard_warnings = detect_injection(chunks)
-    context, sources, _ = build_context(
-        chunks, max_chars=max_context_chars, tagged=settings.prompt_version != "v2"
-    )
-    # Counted before validation trims ``sources`` to the cited subset: how many
-    # chunks reached the model is a retrieval fact, not a citation one.
-    used = len(sources)
-    # Sliced to ``used``, not to ``chunks``: build_context keeps chunks whole or
-    # not at all and stops at max_chars, so a longer list would claim the model
-    # saw something it never received.
-    contexts = [scored.chunk.text for scored in chunks[:used]] if include_contexts else []
-    warnings: list[str] = []
+    stage_started = time.perf_counter()
+    try:
+        chunks = compress_chunks(
+            chunks,
+            query,
+            method=method,
+            budget_chars=compress_budget,
+            settings=settings,
+            embedder=embedder,
+        )
+        guard_warnings: list[str] = []
+        if settings.guard_detect:
+            # After compression, which rewrites chunk text: scanning before it would
+            # be scanning something the model never receives.
+            chunks, guard_warnings = detect_injection(chunks)
+        context, sources, _ = build_context(
+            chunks, max_chars=max_context_chars, tagged=settings.prompt_version != "v2"
+        )
+        # Counted before validation trims ``sources`` to the cited subset: how many
+        # chunks reached the model is a retrieval fact, not a citation one.
+        used = len(sources)
+        # Sliced to ``used``, not to ``chunks``: build_context keeps chunks whole or
+        # not at all and stops at max_chars, so a longer list would claim the model
+        # saw something it never received.
+        contexts = [scored.chunk.text for scored in chunks[:used]] if include_contexts else []
+        warnings: list[str] = []
+        system_prompt = SYSTEM_PROMPTS[settings.prompt_version] if chunks else None
+        user_prompt = USER_TEMPLATE.format(context=context, question=question) if chunks else None
+    except Exception as error:
+        if owns_trace and trace:
+            record_failure(trace, error)
+        raise
+    if trace:
+        trace.context_built(
+            chunks,
+            used,
+            system_prompt,
+            user_prompt,
+            (time.perf_counter() - stage_started) * 1000,
+        )
 
     refusal: Literal["no_context", "model_declined"] | None
-    if chunks:
-        text, usage = llm(
-            SYSTEM_PROMPTS[settings.prompt_version],
-            USER_TEMPLATE.format(context=context, question=question),
-            model=settings.generation_model,
-        )
-        if not text.strip():
-            # A blank completion is a failure — a length stop, a refusal, a
-            # filtered response. Returning it hides that behind a valid object.
-            raise ValueError("the model returned an empty answer")
-        text, sources, warnings = validate_citations(text, sources, strict=strict)
-        refusal = "model_declined" if is_refusal(text) else None
-    else:
-        # No call: with an empty context the only thing a model can produce is an
-        # invention, and it would be charged for. Nothing to validate either —
-        # a refusal with no context to cite is the right answer, not a warning.
-        text, usage, sources = NO_CONTEXT_ANSWER, {}, []
-        refusal = "no_context"
+    model_response: str | None = None
+    stage_started = time.perf_counter()
+    try:
+        if chunks:
+            text, usage = llm(
+                system_prompt or "",
+                user_prompt or "",
+                model=settings.generation_model,
+            )
+            model_response = text
+            if not text.strip():
+                # A blank completion is a failure — a length stop, a refusal, a
+                # filtered response. Returning it hides that behind a valid object.
+                raise ValueError("the model returned an empty answer")
+            text, sources, warnings = validate_citations(text, sources, strict=strict)
+            refusal = "model_declined" if is_refusal(text) else None
+        else:
+            # No call: with an empty context the only thing a model can produce is an
+            # invention, and it would be charged for. Nothing to validate either —
+            # a refusal with no context to cite is the right answer, not a warning.
+            text, usage, sources = NO_CONTEXT_ANSWER, {}, []
+            refusal = "no_context"
+    except Exception as error:
+        if owns_trace and trace:
+            record_failure(trace, error)
+        raise
+    if trace:
+        trace.generated(model_response, usage, (time.perf_counter() - stage_started) * 1000)
 
     warnings = guard_warnings + warnings
 
-    return Answer(
+    answer = Answer(
         answer=text,
         sources=sources,
         retrieval=RetrievalStats(retrieved=pool, used=used, dropped=pool - used),
@@ -197,3 +248,4 @@ def answer_question(
         warnings=warnings,
         refusal=refusal,
     )
+    return record_answer(trace, answer) if owns_trace and trace else answer

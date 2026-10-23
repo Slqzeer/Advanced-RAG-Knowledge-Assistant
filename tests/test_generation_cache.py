@@ -22,6 +22,7 @@ from app.generation.cache import (
     similarity_floor,
 )
 from app.models.answers import Answer, RetrievalStats
+from app.observability.trace import QueryTrace
 
 # The spec's denylist, spelled out rather than imported: a setting joining it is
 # a decision a reviewer should see in this diff.
@@ -39,6 +40,10 @@ UNKEYED = {
     "embedding_api_key",
     "judge_model",
     "judge_embedding_model",
+    "trace_path",
+    "trace_content",
+    "generation_usd_per_mtok_input",
+    "generation_usd_per_mtok_output",
 }
 
 
@@ -50,7 +55,16 @@ def _other(name: str, value: Any) -> Any:
     if isinstance(value, Path):
         return value / "other"
     if value is None:
-        return 0.5 if name == "cache_semantic_threshold" else "other"
+        return (
+            0.5
+            if name
+            in {
+                "cache_semantic_threshold",
+                "generation_usd_per_mtok_input",
+                "generation_usd_per_mtok_output",
+            }
+            else "other"
+        )
     return f"{value}-other"
 
 
@@ -146,6 +160,45 @@ def test_a_dead_redis_answers_with_a_warning_and_does_not_hang() -> None:
     assert answer.answer == "answer to q"
     assert any("cache" in warning for warning in answer.warnings)
     assert time.perf_counter() - started < 1.0
+
+
+def test_the_cache_wrapper_writes_one_trace_for_a_generated_answer(tmp_path) -> None:
+    path = tmp_path / "traces.jsonl"
+    calls: list[str] = []
+
+    cached_answer(
+        "q",
+        settings=Settings(_env_file=None, trace_path=path),
+        answerer=_answerer(calls),
+    )
+
+    traces = path.read_text(encoding="utf-8").splitlines()
+    assert len(traces) == 1
+    trace = QueryTrace.model_validate_json(traces[0])
+    assert trace.question == "q" and trace.cache is None
+
+
+def test_an_exact_follow_up_hit_is_counted_as_a_repeat(tmp_path) -> None:
+    from unittest.mock import Mock
+
+    path = tmp_path / "traces.jsonl"
+    client = Mock(spec=Redis)
+    client.get.return_value = _answer("stored").model_dump_json().encode()
+    history = [{"role": "user", "content": "earlier"}]
+
+    answer = cached_answer(
+        "and Depends?",
+        history=history,
+        client=client,
+        settings=Settings(_env_file=None, trace_path=path),
+        answerer=lambda *_args, **_kwargs: pytest.fail("an exact hit must not generate"),
+    )
+
+    trace = QueryTrace.model_validate_json(path.read_text(encoding="utf-8"))
+    assert answer.cache == trace.cache == "exact"
+    assert trace.follow_up is True
+    assert trace.follow_up_repeat is True
+    assert trace.chunks == [] and trace.user_prompt is None
 
 
 # --- against a real Redis 8 -------------------------------------------------
