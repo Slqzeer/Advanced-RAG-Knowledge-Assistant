@@ -20,6 +20,7 @@ from redis import Redis
 from app.core.config import Settings, get_settings
 from app.generation.answer import answer_question
 from app.models.answers import Answer
+from app.observability.trace import QueryRecorder, record_answer, record_failure
 from app.retrieval.search import default_embedder
 
 PREFIX = "rag:cache:"
@@ -34,7 +35,16 @@ Embedder = Callable[[str], list[float]]
 # added later changes the key by default, so forgetting one costs a miss, never a
 # stale answer.
 _UNKEYED = frozenset(
-    {"qdrant_url", "redis_url", "cache_ttl_s", "cache_semantic_threshold", "corpus_dir"}
+    {
+        "qdrant_url",
+        "redis_url",
+        "cache_ttl_s",
+        "cache_semantic_threshold",
+        "trace_content",
+        "generation_usd_per_mtok_input",
+        "generation_usd_per_mtok_output",
+        "corpus_dir",
+    }
 )
 
 
@@ -167,6 +177,7 @@ def cached_answer(
     client: Redis | None = None,
     embedder: Embedder | None = None,
     answerer: Callable[..., Answer] = answer_question,
+    trace: QueryRecorder | None = None,
     **kwargs: Any,
 ) -> Answer:
     """answer_question(), served from Redis when the same question, or a close
@@ -177,8 +188,33 @@ def cached_answer(
     Refusals are never stored. Any Redis failure is a warning, never an error.
     """
     settings = settings or get_settings()
+    owns_trace = trace is None and settings.trace_path is not None
+    if owns_trace:
+        trace = QueryRecorder(
+            question,
+            history or [],
+            settings,
+            mode=kwargs.get("mode"),
+            transform=kwargs.get("transform"),
+            rerank=kwargs.get("rerank"),
+            compress=kwargs.get("compress"),
+            top_k=kwargs.get("top_k"),
+        )
+
+    def finish(answer: Answer) -> Answer:
+        return record_answer(trace, answer) if owns_trace and trace else answer
+
+    def produce() -> Answer:
+        try:
+            trace_kwarg = {"trace": trace} if trace else {}
+            return answerer(question, history=history, settings=settings, **kwargs, **trace_kwarg)
+        except Exception as error:
+            if owns_trace and trace:
+                record_failure(trace, error)
+            raise
+
     if client is None and not settings.redis_url:
-        return answerer(question, history=history, settings=settings, **kwargs)
+        return finish(produce())
 
     started = time.perf_counter()
     client = client or connect(settings)
@@ -204,15 +240,15 @@ def cached_answer(
             hit, layer = _nearest(client, vector(), fp, threshold), "semantic"
     except Exception as error:
         # Optional cache work includes embedding API and SQLite calls, not just Redis.
-        answer = answerer(question, history=history, settings=settings, **kwargs)
-        return _warned(answer, f"cache lookup failed, answered without it: {error}")
+        answer = produce()
+        return finish(_warned(answer, f"cache lookup failed, answered without it: {error}"))
     if hit is not None:
         elapsed = (time.perf_counter() - started) * 1000
-        return hit.model_copy(update={"cache": layer, "latency_ms": elapsed})
+        return finish(hit.model_copy(update={"cache": layer, "latency_ms": elapsed}))
 
-    answer = answerer(question, history=history, settings=settings, **kwargs)
+    answer = produce()
     if answer.refusal is not None:
-        return answer  # a refusal must not outlive the re-index that fixes it
+        return finish(answer)  # a refusal must not outlive the re-index that fixes it
     try:
         client.set(ANSWER_PREFIX + key, answer.model_dump_json(), ex=settings.cache_ttl_s)
         if indexable:
@@ -230,8 +266,8 @@ def cached_answer(
                 json.dumps({"fp": fp}),
             )
     except Exception as error:
-        return _warned(answer, f"cache store failed: {error}")
-    return answer
+        return finish(_warned(answer, f"cache store failed: {error}"))
+    return finish(answer)
 
 
 def clear_cache(client: Redis | None = None, *, settings: Settings | None = None) -> int:

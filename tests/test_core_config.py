@@ -56,3 +56,9 @@ def test_the_cache_is_off_by_default() -> None:
     assert settings.redis_url == ""
     assert settings.cache_ttl_s == 604800
     assert settings.cache_semantic_threshold is None
+
+
+def test_tracing_is_off_by_default() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.trace_path is None
+    assert settings.trace_content is False

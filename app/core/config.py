@@ -138,6 +138,14 @@ class Settings(BaseSettings):
     # Rule S failed: all 38 paraphrases fall below the highest false-hit cosine
     # (0.8798); none reaches the candidate threshold (0.8998).
     cache_semantic_threshold: float | None = None
+    # Step 24. Empty means no trace and no filesystem access. A configured path
+    # stores original queries; content below separately controls prompt/response.
+    trace_path: Path | None = None
+    trace_content: bool = False
+    # Prices are deployment configuration, not model constants: a gateway can
+    # bill the same wire model differently. Both are required to compute cost.
+    generation_usd_per_mtok_input: float | None = None
+    generation_usd_per_mtok_output: float | None = None
     corpus_dir: Path = Path("data/raw")
 
 

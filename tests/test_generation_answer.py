@@ -10,6 +10,7 @@ from app.generation.context import build_context
 from app.generation.llm import SYSTEM_PROMPTS
 from app.models.answers import Answer
 from app.models.chunks import Chunk, ScoredChunk
+from app.observability.trace import QueryTrace
 
 SETTINGS = Settings(_env_file=None, generation_model="test-model", top_k=3)
 
@@ -441,3 +442,129 @@ def test_with_the_detector_off_a_planted_chunk_is_sent_as_is() -> None:
         settings=SETTINGS.model_copy(update={"guard_detect": False}),
     )
     assert "CANARY-7F3A" in llm.calls[0]["user"]
+
+
+def test_a_generated_answer_writes_one_truthful_trace(tmp_path) -> None:
+    path = tmp_path / "traces.jsonl"
+    settings = SETTINGS.model_copy(
+        update={
+            "trace_path": path,
+            "trace_content": True,
+            "generation_usd_per_mtok_input": 1.0,
+            "generation_usd_per_mtok_output": 2.0,
+        }
+    )
+    chunks = [
+        scored(1, "alpha").model_copy(update={"rerank_score": 0.91}),
+        scored(2, "beta").model_copy(update={"rerank_score": 0.82}),
+    ]
+
+    answer = ask(
+        "How does Depends work?",
+        settings=settings,
+        retriever=FakeRetriever(chunks),
+        llm=FakeLLM("Use alpha [1]."),
+        compress="",
+    )
+
+    (line,) = path.read_text(encoding="utf-8").splitlines()
+    trace = QueryTrace.model_validate_json(line)
+    assert trace.question == trace.resolved_query == "How does Depends work?"
+    assert [(chunk.chunk_id, chunk.score, chunk.rerank_score) for chunk in trace.chunks] == [
+        ("fastapi:doc-1#0", 0.9, 0.91),
+        ("fastapi:doc-2#0", 0.8, 0.82),
+    ]
+    assert [(chunk.used, chunk.cited) for chunk in trace.chunks] == [(True, True), (True, False)]
+    assert trace.system_prompt == SYSTEM_PROMPTS["v2"]
+    assert "alpha" in (trace.user_prompt or "")
+    assert "How does Depends work?" in (trace.user_prompt or "")
+    assert trace.response == answer.answer == "Use alpha [1]."
+    assert trace.usage == {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+    assert trace.cost_usd == pytest.approx(0.00014)
+    assert trace.timings.retrieval_ms >= 0
+    assert trace.timings.total_ms > 0
+
+
+def test_trace_content_is_separately_opt_in(tmp_path) -> None:
+    path = tmp_path / "traces.jsonl"
+    answer = ask(settings=SETTINGS.model_copy(update={"trace_path": path}))
+
+    trace = QueryTrace.model_validate_json(path.read_text(encoding="utf-8"))
+    assert trace.question == "How do dependencies work?"
+    assert trace.system_prompt is None and trace.user_prompt is None
+    assert trace.response is None
+    assert answer.answer == "Use Depends() [1]."
+
+
+def test_trace_keeps_the_raw_model_response_before_citation_cleanup(tmp_path) -> None:
+    path = tmp_path / "traces.jsonl"
+
+    answer = ask(
+        settings=SETTINGS.model_copy(update={"trace_path": path, "trace_content": True}),
+        llm=FakeLLM("Depends works [1], but this source is invented [9]."),
+    )
+
+    trace = QueryTrace.model_validate_json(path.read_text(encoding="utf-8"))
+    assert trace.response == "Depends works [1], but this source is invented [9]."
+    assert answer.answer == "Depends works [1], but this source is invented."
+
+
+def test_a_trace_write_failure_warns_but_keeps_the_answer(tmp_path) -> None:
+    answer = ask(settings=SETTINGS.model_copy(update={"trace_path": tmp_path}))
+
+    assert answer.answer == "Use Depends() [1]."
+    assert any(warning.startswith("trace write failed:") for warning in answer.warnings)
+
+
+def test_a_retrieval_failure_is_traced_and_reraised(tmp_path) -> None:
+    path = tmp_path / "traces.jsonl"
+
+    def broken_retriever(query: str, **kwargs: Any) -> list[ScoredChunk]:
+        raise RuntimeError("qdrant unavailable")
+
+    with pytest.raises(RuntimeError, match="qdrant unavailable"):
+        ask(
+            settings=SETTINGS.model_copy(update={"trace_path": path}),
+            retriever=broken_retriever,
+        )
+
+    trace = QueryTrace.model_validate_json(path.read_text(encoding="utf-8"))
+    assert trace.error_type == "RuntimeError"
+    assert trace.error_message == "qdrant unavailable"
+    assert trace.response is None
+
+
+def test_a_model_failure_is_traced_and_reraised(tmp_path) -> None:
+    path = tmp_path / "traces.jsonl"
+
+    def broken_model(system: str, user: str, **kwargs: Any) -> tuple[str, dict[str, int]]:
+        raise RuntimeError("model unavailable")
+
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        ask(settings=SETTINGS.model_copy(update={"trace_path": path}), llm=broken_model)
+
+    trace = QueryTrace.model_validate_json(path.read_text(encoding="utf-8"))
+    assert trace.error_type == "RuntimeError"
+    assert trace.error_message == "model unavailable"
+    assert len(trace.chunks) == 3
+
+
+def test_a_compression_failure_is_traced_and_reraised(tmp_path) -> None:
+    path = tmp_path / "traces.jsonl"
+
+    def broken_embedder(texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("embedding unavailable")
+
+    with pytest.raises(RuntimeError, match="embedding unavailable"):
+        ask(
+            settings=SETTINGS.model_copy(update={"trace_path": path}),
+            retriever=FakeRetriever([scored(1, "Alpha sentence. Beta sentence.")]),
+            compress="embedding",
+            compress_budget=5,
+            embedder=broken_embedder,
+        )
+
+    trace = QueryTrace.model_validate_json(path.read_text(encoding="utf-8"))
+    assert trace.error_type == "RuntimeError"
+    assert trace.error_message == "embedding unavailable"
+    assert len(trace.chunks) == 1
