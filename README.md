@@ -22,6 +22,7 @@
 - [Évaluation de la génération — étape 21](#évaluation-de-la-génération--étape-21--ragas-et-ce-que-recallcontext-ne-voyait-pas)
 - [Garde-fous — étape 22](#garde-fous--étape-22--le-refus-devient-un-champ-et-aucune-défense-ne-gagne-sa-place)
 - [Cache — étape 23](#cache--étape-23--exact-disponible-sémantique-rejeté)
+- [Observabilité — étape 24](#observabilité--étape-24--une-trace-vérifiable-par-requête)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -41,11 +42,13 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 23 terminée — cache exact mesuré.** 30/30 réponses stockées rejouées à
-l'octet près, médiane 19,8 ms contre 2 622 ms pour ces mêmes questions générées ;
-coût génération du replay réduit de 83,1 %. Les 8 refus restent des misses.
-Le cache sémantique reste désactivé : 0/38 paraphrases passent la règle S.
-Prochaine étape : **24, observabilité**. [Mesures du cache](#cache--étape-23--exact-disponible-sémantique-rejeté).
+**Étape 24 terminée — une trace locale par requête.** La requête originale et
+résolue, les chunks classés et leurs scores, l'usage, le coût configuré, les
+latences par étape, le refus et la couche de cache sont écrits dans un JSONL
+versionné. Le prompt et la réponse demandent un second opt-in. Sur 1 000 traces
+représentatives, 1 000 sont relues et validées ; écriture p50 **0,45 ms**, p95
+**0,84 ms** contre la limite de 5 ms : règle O satisfaite. Prochaine étape :
+**25, API FastAPI**. [Détails](#observabilité--étape-24--une-trace-vérifiable-par-requête).
 
 **Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
 
@@ -1863,7 +1866,60 @@ Les suivis de conversation n'utilisent que le cache exact. **Hypothèse, pas mes
 un hit sémantique sur un suivi demande d'abord de résoudre l'historique (un appel LLM,
 ~1–2 s), avant de savoir s'il touche, et nous pensons les suivis répétés rares.
 Il n'y a pas encore de trafic pour le mesurer ; la trace par requête de l'étape 24
-pourra les compter.
+les compte désormais dès qu'un déploiement en reçoit.
+
+## Observabilité — étape 24 : une trace vérifiable par requête
+
+`app/observability/trace.py` conserve ce que `Answer` ne doit pas exposer dans la
+future API : requête résolue, liste ordonnée des chunks, score de retrieval,
+score de reranking éventuel, présence dans le prompt et dans les citations,
+latences de contextualisation/retrieval/contexte/génération, tokens, coût,
+refus, cache et erreur. `answer_question()` voit les étapes internes ;
+`cached_answer()` possède la trace externe et empêche un miss d'être écrit deux
+fois. Un hit exact ou sémantique dit la vérité : aucun chunk ni prompt n'est
+inventé pour une génération qui n'a pas eu lieu.
+
+Le stockage est volontairement local et simple : un objet Pydantic versionné par
+ligne dans `data/processed/traces.jsonl`, ignoré par Git. Sans `TRACE_PATH`, aucun
+fichier n'est touché. Activer ce chemin autorise le stockage des questions ;
+`TRACE_CONTENT=true` autorise en plus le prompt — donc les passages du corpus —
+et la réponse. Les clés, URLs de passerelle et variables d'environnement ne sont
+jamais enregistrées. Une erreur d'écriture ajoute un avertissement à la réponse
+mais ne la remplace pas.
+
+Le prix n'est pas déduit du nom du modèle. Il n'est calculé que si les deux tarifs
+du déploiement sont configurés :
+
+```bash
+TRACE_PATH=data/processed/traces.jsonl
+TRACE_CONTENT=false
+GENERATION_USD_PER_MTOK_INPUT=0.15
+GENERATION_USD_PER_MTOK_OUTPUT=0.60
+
+uv run python scripts/ask.py "How does FastAPI dependency injection work?"
+uv run python scripts/trace_report.py
+```
+
+Le rapport n'imprime aucun contenu. Il compte générations, refus, erreurs, hits
+exacts/sémantiques, tokens, coût connu et latence p50/p95. Il compte aussi les
+suivis (`history_turns > 0`) et leurs répétitions exactes : l'hypothèse laissée
+par l'étape 23 peut désormais être lue sur le trafic réel. Aucun trafic n'existe
+encore, donc aucun taux n'est inventé ; le rapport rend `None` sans observation.
+
+### Règle O : 1 000 traces valides, p95 sous 5 ms
+
+Le benchmark ne contacte ni modèle, ni Redis, ni Qdrant. Il écrit 1 000 traces
+représentatives — vingt chunks classés et un prompt de 4 000 caractères — avec
+le sink de production, puis relit chaque ligne avec le schéma de production.
+
+| Écritures | Lignes valides | Taille / trace | p50 | p95 | Verdict |
+|---:|---:|---:|---:|---:|---|
+| 1 000 | 1 000 | 7 588 octets | 0,45 ms | 0,84 ms | **PASS** |
+
+Résultat brut : [`data/eval/observability.jsonl`](data/eval/observability.jsonl).
+La limite du JSONL reste explicite : l'append est mono-processus. L'export OTLP
+et l'instrumentation automatique attendent l'API et son déploiement (étapes
+25-26), où un collecteur aura réellement quelque part où recevoir les spans.
 
 
 ## Premiers constats
@@ -2081,6 +2137,7 @@ docker compose down
 │   ├── generation/   # contexte, appel au modèle, citations, orchestration
 │   ├── ingestion/    # chargement, nettoyage, découpage et vectorisation
 │   ├── models/       # modèles de données
+│   ├── observability/ # traces opérationnelles par requête
 │   └── retrieval/    # indexation Qdrant et recherche par similarité
 ├── data/
 │   ├── eval/         # jeu de questions annoté et historique des runs, versionnés
@@ -2112,7 +2169,7 @@ docker compose down
 - [x] **Phase 12 — Guardrails** : gérer le manque de contexte et les entrées hostiles (faite ; `Answer.refusal` livré, seuil de score rejeté hors ligne — 0 sur 7 —, prompt v3 et détecteur mesurés et non activés : le prompt v2 tient déjà 79 attaques sur 80).
 - [x] **Phase 13 — Cache** : cache exact mesuré (30/30 réponses identiques, p50 19,8 ms) ; sémantique rejeté (0/38 paraphrases).
 - [ ] **Phase 14 — API professionnelle** : exposer les opérations FastAPI.
-- [ ] **Phase 15 — Observabilité** : suivre scores, tokens, latence et coût.
+- [x] **Phase 15 — Observabilité** : une trace JSONL versionnée par requête ; scores, prompt optionnel, tokens, coût configuré et latences par étape, règle O satisfaite à 0,84 ms p95.
 - [ ] **Phase 16 — Dockerisation** : conteneuriser l'application complète.
 - [ ] **Phase 17 — Tests et CI/CD** : automatiser les régressions et les builds.
 

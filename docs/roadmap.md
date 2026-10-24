@@ -8,12 +8,12 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-23 are done. Step 23's exact cache returns all 30 stored
-answers byte-identically at 19.8 ms p50 (101.7 ms p95); the same questions took
-2,622 ms median to generate. Eight cold refusals remain misses. Replay generation
-cost falls 83.1% at list price. Rule E passes. Rule S fails (0/38 paraphrases at
-0.899832), so the semantic layer stays disabled. Measurements use direct OpenAI
-GPT-4o-mini and remote Qdrant/Redis over Tailscale. Step 24 (observability) is next.**
+**Phase 0 and steps 02-24 are done. Step 24 writes one schema-versioned JSONL
+trace per query: resolved query, ranked chunks and scores, prompt/response when
+explicitly enabled, tokens, configured cost, stage latency, refusal, cache and
+failure. Rule O passes: 1,000/1,000 representative traces validate, at 0.45 ms
+p50 and 0.84 ms p95 append latency against a 5 ms ceiling. Step 25 (FastAPI) is
+next.**
 
 Shipped and verified:
 
@@ -45,13 +45,14 @@ Shipped and verified:
 | Guardrails | `app/models/answers.py`, `app/generation/{guard,llm,context}.py`, `app/evaluation/injection.py`, `data/eval/injections.json` — `Answer.refusal` (`no_context` \| `model_declined` \| `None`) replaces phrase matching for every caller. The brief's retrieval-score gate was rejected **offline**, from rows already on disk: the weakest answerable question scores 0.306 and all 7 unanswerable ones score 0.335-0.394, so the pre-registered floor catches **0 of 7**. Prompt v3 (`<entry>`-tagged context) and `detect_injection()` (3 patterns, **0 of 1 484** corpus chunks flagged) were measured on a 10 × 9 planted-chunk fixture and **neither flips**: prompt v2 already holds **79 of 80** attacks on `gemini-3.6-flash-high`, so both clause 1s were unreachable. `PROMPT_VERSION=v2`, `GUARD_DETECT=false`. The generator now goes through OmniRoute (`GENERATION_BASE_URL`), with a 60 s per-attempt timeout and the gateway's response cache bypassed on every call |
 | RAGAS judge | `app/evaluation/judge.py`, `Answer.contexts`, `scripts/benchmark_answers.py --ragas` — the only module that imports `ragas`; faithfulness, relevancy and context precision without reference, scored on the contexts that actually reached the model. A four-fixture gate (`pytest -m requires_api`) replayed for every judge: refusal relevancy 0.000, fabrication faithfulness 0.000, buried context precision exactly 0.25. The published arms run `github/gpt-4o-mini` judged by `github/gpt-4o-2024-11-20` through OmniRoute, relevancy embedded locally by fastembed, faithfulness + relevancy only. Waits follow the gateway's `reset_seconds`, a hung call is retried, and a row with one lost cell is refused. `COMPRESS_LENGTH_PENALTY` measured at 0.5, 1.0 and −0.5 and **stays 0.0** |
 | Cache | `app/generation/cache.py`, `data/eval/cache_pairs.jsonl`, `scripts/benchmark_cache.py` ? 30/30 exact hits byte-identical, p50 19.8 ms, p95 101.7 ms; cold refusals 8; generation $0.008967 -> $0.001517. Rule E passes; Rule S fails (0/38 at 0.899832), semantic disabled. |
+| Per-query observability | `app/observability/trace.py`, `scripts/trace_report.py`, `data/eval/observability.jsonl` — one versioned trace at the answer/cache orchestration seam; 1,000/1,000 representative JSONL records validate, p50 0.45 ms, p95 0.84 ms. Prompt and response content require explicit opt-in. |
 | Metadata filtering | `app/ingestion/loader.py`, `app/retrieval/search.py` — `doc_type` derived from the corpus layout, indexed, filterable through a generic `filters=` mapping; per-facet recall and an oracle run recording the ceiling on facet routing at **+0.000 Recall@5** |
 
 The loop is closed, verified and measured: a question goes in, a grounded answer with resolved citations comes out of `scripts/ask.py`, and 38 answerable questions give it a score. No HTTP endpoint yet — that is step 25.
 
 Four things later steps own:
 
-- **Follow-ups get exact lookups only. Assumption, not measurement:** a semantic hit on a follow-up needs the history resolved first (one LLM call, ~1-2 s) before we know whether it hits, and we expect repeated follow-ups to be rare. There is no traffic to measure that on yet; step 24's per-query trace can count it. Step 24 owns counting follow-ups and their repeats per trace.
+- **Follow-ups get exact lookups only. Assumption, not measurement:** a semantic hit on a follow-up needs the history resolved first (one LLM call, ~1-2 s) before we know whether it hits. Step 24 now records `follow_up` and `follow_up_repeat`, and `trace_report.py` reports their rate. There is still no real traffic, so no rate is claimed yet; the next deployment can answer this without another code change.
 - **Semantic cache overlap:** all 38 paraphrases fall below the highest would-be false hit (0.879832); none clears the pre-registered candidate (0.899832). Nine are nearest another anchor. Semantic cache remains disabled; a future approach must preserve the frozen fixture and report the failed baseline.
 
 - **`HTTPException 422` is resolved as a finding, not as a fix.** Steps 14-16 gave the retriever the missing capability — BM25's rank-1 hit for `HTTPException 422` does contain the literal token, and `--mode hybrid` surfaces `reference/exceptions` at rank 2 — and the answer is still an honest "I do not know". The four chunks in the corpus containing `422` are two release notes and an OpenAPI JSON example; none of them explains what the code means. The refusal is correct. No later step owns this: the target was chosen at step 07, before step 11 said where the gap actually was, and `exact` was already the strongest category at 0.892.
@@ -90,7 +91,7 @@ Four things later steps own:
 | 21 | Phase 11 — RAGAS | `v1.1` | Faithfulness and answer relevance, not just retrieval. **Done — the judge agrees with Recall@context on average and disagrees on `q018`.** The compressed pool lifts relevancy 0.649 → **0.705** (noise 0.005) with faithfulness flat, all of it from `multi_doc` (0.478 → 0.812), while `q018` falls 0.883 → **0.000**. No length penalty clears the rule: α 0.5 wins `code` (0.849) and loses `multi_doc` (0.484), the reverse of the pre-registered prediction; `COMPRESS_LENGTH_PENALTY` stays 0.0. |
 | 22 | Phase 12 — Guardrails | `v1.6` | Refuses when retrieval is weak; survives injected instructions in documents. **Done, and the brief lost twice.** The score gate fails offline (0 of 7 caught), and every one of the 8 answerable refusals had a relevant document in context. Prompt v2 already holds 79 of 80 planted attacks, so prompt v3 and the detector have nothing to defend: both stay off. The one shipped change is `Answer.refusal`. |
 | 23 | Phase 13 - Cache | `v1.2` | Done: 30/30 stored answers identical, hit p50 19.8 ms versus matched cold 2,622 ms; 8 refusals; generation cost down 83.1%. Rule E passes. Rule S fails, semantic remains off. |
-| 24 | Phase 15 — Observability | `v1.5` | Per-query trace: scores, prompt, tokens, latency, cost. |
+| 24 | Phase 15 — Observability | — | **Done:** one privacy-controlled JSONL trace per query; ranked scores, optional prompt/response, tokens, configured cost, stage latency, cache/refusal/failure. Rule O passes at 0.84 ms p95 for 1,000/1,000 valid records. |
 | 25 | Phase 14 — FastAPI | `v1.0` | `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`. |
 | 26-28 | Phase 16-17 — Docker, tests, CI | `v1.0` | `docker compose up` and a green pipeline with RAG regression gates. |
 | 29-30 | — | — | Benchmark dashboard and the README that tells the whole story. |
@@ -103,7 +104,7 @@ lands rather than promised here. Step 21 took **`v1.1`**.
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-23:
+Detailed, executable plans exist for steps 02-24:
 
 | Step | Plan |
 |---|---|
@@ -126,8 +127,9 @@ Detailed, executable plans exist for steps 02-23:
 | 21 RAGAS | [`2026-09-14-step-21-ragas.md`](superpowers/plans/2026-09-14-step-21-ragas.md), design: [`2026-09-14-ragas-design.md`](superpowers/specs/2026-09-14-ragas-design.md), transcripts: [`transcripts-step-21.md`](superpowers/plans/transcripts-step-21.md) |
 | 22 Guardrails | [`2026-09-18-step-22-guardrails.md`](superpowers/plans/2026-09-18-step-22-guardrails.md), design: [`2026-09-17-guardrails-design.md`](superpowers/specs/2026-09-17-guardrails-design.md) |
 | 23 Cache | [`2026-09-30-step-23-cache.md`](superpowers/plans/2026-09-30-step-23-cache.md), design: [`2026-09-30-cache-design.md`](superpowers/specs/2026-09-30-cache-design.md) |
+| 24 Observability | [`2026-10-23-step-24-observability.md`](superpowers/plans/2026-10-23-step-24-observability.md), design: [`2026-10-23-observability-design.md`](superpowers/specs/2026-10-23-observability-design.md) |
 
-**Steps 24-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements: whether a score floor can carry refusal at all, what a cache key has to include. Writing those plans now would mean inventing the answers — steps 12-20 each answered their own question only by running it, four of them answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with step 11's numbers in hand.
+**Steps 25-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements. Writing those plans now would mean inventing the answers — steps 12-23 each answered their own question only by running it, several answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with the recorded results in hand.
 
 ## How a step lands
 
@@ -165,6 +167,7 @@ app/
 ├── generation/cache.py  # 23  answer cache: exact key, nearest paraphrase, Redis 8
 ├── generation/citations.py   # 09  parse and validate [n] references
 ├── generation/compress.py    # 20  ranked chunks -> shorter ranked chunks, to a budget
+├── observability/trace.py     # 24  query -> versioned local operational trace
 ├── evaluation/dataset.py     # 10  load and validate the eval set
 ├── evaluation/metrics.py     # 11  recall@k, precision@k, mrr, ndcg, hit rate
 ├── evaluation/benchmark.py   # 11  run the set, emit a markdown row
@@ -175,7 +178,9 @@ scripts/
 ├── ask.py                    # 08
 ├── benchmark.py              # 11
 ├── benchmark_conversations.py # 18  the conv-raw / conv-rewrite delta
-└── benchmark_answers.py      # 20  refusal rate, context chars, real prompt_tokens
+├── benchmark_answers.py      # 20  refusal rate, context chars, real prompt_tokens
+├── benchmark_observability.py # 24  JSONL sink overhead and Rule O
+└── trace_report.py           # 24  aggregate local traces without content
 ```
 
 `api/` is last on purpose. A CLI proves the pipeline works; HTTP is packaging.
