@@ -25,6 +25,7 @@
 - [Observabilité — étape 24](#observabilité--étape-24--une-trace-vérifiable-par-requête)
 - [API FastAPI — étape 25](#api-fastapi--étape-25--le-pipeline-devient-un-service)
 - [Docker — étape 26](#docker--étape-26--lapplication-devient-reproductible)
+- [Tests — étape 27](#tests--étape-27--deux-portes-mesurées)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -44,14 +45,14 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 26 terminée — l'application complète est conteneurisée.** Une image
-Python 3.12 verrouillée par `uv` exécute FastAPI sans privilèges ; Docker Compose
-relie l'API à Qdrant et Redis, attend leur santé et persiste l'index, le corpus,
-le cache d'embeddings et les traces configurées. `docker compose up --build -d --wait` rend les
-trois services sains ; `/health` et `/metrics` répondent `200`. La suite complète
-passe avec les intégrations actives : **643 tests réussis**, 5 tests payants
-explicitement exclus. Prochaine étape : **27, Tests**.
-[Détails](#docker--étape-26--lapplication-devient-reproductible).
+**Étape 27 terminée — les régressions ont deux portes explicites.** Les **648
+tests non payants** passent et couvrent **96,06 %** des branches de `app`, au-dessus
+du plancher verrouillé à 95 %. `benchmark.py --gate-against` refuse désormais un
+run partiel, une fixture modifiée, une métrique absente, une perte agrégée supérieure
+à 0,02 ou une perte de Recall@5 par catégorie supérieure à 0,05. Le run réel de la
+configuration livrée reproduit exactement `compress-embedding-d20` (Recall@5 0,768,
+Recall@10 0,805, Recall@20 0,814, MRR 0,810) et passe la porte. Prochaine étape :
+**28, CI/CD**. [Détails](#tests--étape-27--deux-portes-mesurées).
 
 **Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Depuis l'étape 25, ce même pipeline est aussi servi par FastAPI ; `scripts/ask.py` reste son client local en ligne de commande.
 
@@ -2009,6 +2010,28 @@ trois services et `GET /health` étaient sains. L'image finale tourne avec l'UID
 10001, ne contient ni `.env` ni les outils de développement. La suite locale
 termine à **643 réussites**, les 5 tests payants restant explicitement exclus.
 
+## Tests — étape 27 : deux portes mesurées
+
+La suite locale reste gratuite par défaut : `pytest` exclut les cinq tests qui
+appellent une API payante. La porte de couverture mesure uniquement le code
+d'application avec les branches activées et échoue sous **95 %**. Le run complet
+compte **648 réussites** et atteint **96,06 %**.
+
+La seconde porte protège la qualité RAG, pas seulement l'exécution du code. Un
+benchmark frais est comparé à une ligne nommée de `data/eval/results.jsonl` : aucun
+échec de retrieval ni changement de fixture n'est accepté ; Recall@5, Recall@10,
+Recall@20 et MRR peuvent perdre au plus 0,02, et chaque catégorie au plus 0,05 de
+Recall@5. Le premier run réel a correctement refusé un timeout Qdrant sur `q001` ;
+le run complet suivant a reproduit la baseline à l'identique et passé la porte.
+
+```powershell
+uv run pytest --cov=app --cov-branch
+uv run python scripts/benchmark.py --label regression-candidate --top-k 20 `
+  --compress embedding --gate-against compress-embedding-d20 --no-save
+```
+
+L'automatisation de ces commandes dans GitHub Actions reste l'étape 28.
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -2119,6 +2142,12 @@ uv run mypy app
 
 # Exécuter les tests
 uv run pytest
+
+# Exécuter la porte de couverture (branches de app, minimum 95 %)
+uv run pytest --cov=app --cov-branch
+
+# Comparer le retrieval livré à sa baseline enregistrée, sans écrire de nouvelle ligne
+uv run python scripts/benchmark.py --label regression-candidate --top-k 20 --compress embedding --gate-against compress-embedding-d20 --no-save
 
 # Servir l'API et sa documentation OpenAPI sur http://127.0.0.1:8000/docs
 uv run uvicorn app.api.main:app --reload
@@ -2264,7 +2293,9 @@ docker compose down
 - [x] **Phase 14 — API professionnelle** : quatre opérations FastAPI livrées et testées (`/query`, `/documents`, `/health`, `/metrics`).
 - [x] **Phase 15 — Observabilité** : une trace JSONL versionnée par requête ; scores, prompt optionnel, tokens, coût configuré et latences par étape, règle O satisfaite à 0,84 ms p95.
 - [x] **Phase 16 — Dockerisation** : image non-root et application Compose API + Qdrant + Redis, construites et vérifiées en conditions réelles.
-- [ ] **Phase 17 — Tests et CI/CD** : automatiser les régressions et les builds.
+- [ ] **Phase 17 — Tests et CI/CD** : portes locales terminées (648 tests, 96,06 %
+  de couverture de branches, benchmark RAG protégé) ; automatisation GitHub Actions
+  restante à l'étape 28.
 
 ## Résultats
 
@@ -2321,7 +2352,9 @@ La relevancy suit aussi la longueur de la réponse : lire chaque gain à côté 
 
 ## Qualité et CI
 
-Les contrôles locaux disponibles sont Ruff, mypy, pytest et pre-commit. La CI GitHub Actions sera ajoutée pendant la phase 17 ; aucun badge CI n'est affiché avant l'existence du workflow correspondant.
+Les contrôles locaux disponibles sont Ruff, mypy, pytest, une couverture de branches
+à 95 %, la porte de régression RAG et pre-commit. La CI GitHub Actions sera ajoutée
+à l'étape 28 ; aucun badge CI n'est affiché avant l'existence du workflow correspondant.
 
 Chaque future phase doit mettre à jour dans le même changement :
 
@@ -2336,4 +2369,4 @@ Chaque future phase doit mettre à jour dans le même changement :
 - [Plan global](docs/roadmap.md) — état actuel, correspondance étapes/phases/versions et index des plans par étape
 - [Spécification du socle](docs/superpowers/specs/2026-09-09-project-foundation-design.md)
 - [Plan d'implémentation du socle](docs/superpowers/plans/2026-09-09-project-foundation.md)
-- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 26 rédigées ; les suivantes sont écrites au début de leur étape
+- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 27 rédigées ; les suivantes sont écrites au début de leur étape

@@ -45,6 +45,7 @@ from app.evaluation.benchmark import (  # noqa: E402
     summarise,
 )
 from app.evaluation.dataset import load_dataset  # noqa: E402
+from app.evaluation.regression import regression_failures  # noqa: E402
 from app.generation.compress import COMPRESSORS, compress  # noqa: E402
 from app.generation.llm import complete  # noqa: E402
 from app.models.chunks import ScoredChunk  # noqa: E402
@@ -275,6 +276,10 @@ def main() -> int:
     parser.add_argument("--include-held-out", action="store_true")
     parser.add_argument("--no-save", action="store_true", help="print only, append nothing")
     parser.add_argument("--compare", help="print a delta table against a previous label")
+    parser.add_argument(
+        "--gate-against",
+        help="exit non-zero if this run regresses beyond the named row's tolerances",
+    )
     parser.add_argument("--abstention-threshold", type=float, default=DEFAULT_ABSTENTION_THRESHOLD)
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -408,6 +413,20 @@ def main() -> int:
     status = 0
     if args.compare:
         status = print_comparison(result, args.compare, load_history(HISTORY))
+    if args.gate_against:
+        matches = [row for row in load_history(HISTORY) if row["label"] == args.gate_against]
+        if not matches:
+            print(f"\nno run labelled {args.gate_against!r} in {HISTORY}")
+            status = 1
+        else:
+            problems = regression_failures(result.to_dict(), matches[-1])
+            if problems:
+                print(f"\n## regression gate against {args.gate_against}: FAIL")
+                for problem in problems:
+                    print(f"- {problem}")
+                status = 1
+            else:
+                print(f"\n## regression gate against {args.gate_against}: PASS")
     if not args.no_save:
         with HISTORY.open("a", encoding="utf-8") as history:
             history.write(json.dumps(result.to_dict(), ensure_ascii=False) + "\n")

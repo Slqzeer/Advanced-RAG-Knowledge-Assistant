@@ -28,6 +28,7 @@ dev = [
     "mypy>=1.17,<2",
     "pre-commit>=4.3,<5",
     "pytest>=8.4,<9",
+    "pytest-cov>=7,<8",
     "ruff>=0.16,<1",
 ]
 
@@ -63,3 +64,12 @@ markers = [
 ]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = true
