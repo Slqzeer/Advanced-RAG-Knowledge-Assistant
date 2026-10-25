@@ -8,14 +8,13 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-27 are done. Step 27 turns the existing suite and benchmark
-history into enforceable gates: all 648 non-paid tests pass, application branch
-coverage is 96.06% against a 95% floor, and a fresh retrieval benchmark exactly
-reproduces the shipped `compress-embedding-d20` row. The gate rejects partial runs,
-fixture drift, missing metrics, aggregate losses over 0.02, and per-category Recall@5
-losses over 0.05. Step 28 (CI/CD) is in progress: its workflow and pinned corpus
-input are implemented locally; the first remote regression run still needs the
-repository's `OPENAI_API_KEY` Actions secret.**
+**Phase 0 and steps 02-29 are done. Step 28 runs the 95% coverage gate and the
+real retrieval regression in GitHub Actions; the first post-merge `main` run passed
+both jobs against the pinned corpus. Step 29 turns 64 committed history rows into
+63 labelled dashboard views without rerunning or inventing a metric. The offline
+dashboard compares retrieval quality and latency, RAGAS answer rows, cache, and
+observability while excluding all per-question and per-probe evidence from its
+browser snapshot. Step 30 (the professional README) is next.**
 
 Shipped and verified:
 
@@ -52,6 +51,8 @@ Shipped and verified:
 | FastAPI service | `app/api/{main,models}.py`, `app/ingestion/index.py`, `app/observability/metrics.py` — `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`; existing pipeline, cache and traces reused, 10 endpoint/index tests plus Qdrant replacement coverage, no new dependency. |
 | Docker application | `docker/Dockerfile`, `.dockerignore`, `compose.yaml` — locked Python 3.12 image, UID/GID 10001, API + Qdrant + Redis health ordering, loopback ports and persistent runtime data. Verified from empty volumes: 156 files fetched, 1,526 chunks indexed, real query then exact hit, document replacement 28 → 2 chunks, and all data retained across forced container recreation; `/health` and `/metrics` return 200. |
 | Test gates | `app/evaluation/regression.py`, `pytest-cov`, `scripts/benchmark.py --gate-against` — 648 non-paid tests, 96.06% application branch coverage against a 95% floor, and a real 45-question run reproducing Recall@5 0.768, Recall@10 0.805, Recall@20 0.814, and MRR 0.810. |
+| CI gates | `.github/workflows/ci.yml` — quality/coverage on pull requests and `main`; pinned-corpus Qdrant regression on `main` and manual runs. First post-merge run passed both jobs. |
+| Benchmark dashboard | `dashboard/index.html`, `app/evaluation/dashboard.py`, `scripts/build_dashboard.py` — 64 history rows condensed into 63 aggregate-only labelled views, offline and dependency-free. |
 
 The loop is closed, verified, measured and served: a question goes in through `POST /query`, and the existing pipeline returns a grounded answer with resolved citations. The CLI remains available through `scripts/ask.py`.
 
@@ -100,8 +101,9 @@ Four things later steps own:
 | 25 | Phase 14 — FastAPI | — | **Done:** `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`; OpenAPI validation, sanitized service failures, document replacement and cache invalidation. |
 | 26 | Phase 16 — Docker | — | **Done:** `docker compose up --build -d --wait` produces a healthy API + Qdrant + Redis stack; the runtime is non-root and can fetch/index the corpus into persistent volumes. |
 | 27 | Phase 17 — Tests | — | **Done:** 95% branch-coverage floor and a measured RAG regression gate against the shipped row. |
-| 28 | Phase 17 — CI | — | Run the local quality and regression gates in a green pipeline. |
-| 29-30 | — | — | Benchmark dashboard and the README that tells the whole story. |
+| 28 | Phase 17 — CI | — | **Done:** the quality/coverage and pinned-corpus retrieval-regression jobs both pass on `main`. |
+| 29 | — | — | **Done:** offline dashboard over 64 versioned runs, with retrieval, answer, cache, and observability views. |
+| 30 | — | — | The professional README that tells the whole story. |
 
 **The tag column past step 20 is provisional.** It was written to track README phase
 numbers rather than step order, which is why it read `v1.3` at step 21 and `v1.0` at
@@ -111,7 +113,7 @@ lands rather than promised here. Step 21 took **`v1.1`**.
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-28:
+Detailed, executable plans exist for steps 02-29:
 
 | Step | Plan |
 |---|---|
@@ -139,8 +141,10 @@ Detailed, executable plans exist for steps 02-28:
 | 26 Docker | [`2026-10-25-step-26-docker.md`](superpowers/plans/2026-10-25-step-26-docker.md) |
 | 27 Tests | [`2026-10-25-step-27-tests.md`](superpowers/plans/2026-10-25-step-27-tests.md) |
 | 28 CI/CD | [`2026-10-25-step-28-ci.md`](superpowers/plans/2026-10-25-step-28-ci.md) |
+| 29 Benchmark dashboard | [`2026-10-25-step-29-benchmark-dashboard.md`](superpowers/plans/2026-10-25-step-29-benchmark-dashboard.md) |
 
-**Steps 29-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements. Writing those plans now would mean inventing the answers — steps 12-23 each answered their own question only by running it, several answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with the recorded results in hand.
+**Step 30 is deliberately unplanned.** It is written at the start of its own step,
+with the completed dashboard and recorded results in hand.
 
 ## How a step lands
 

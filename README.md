@@ -26,6 +26,7 @@
 - [API FastAPI — étape 25](#api-fastapi--étape-25--le-pipeline-devient-un-service)
 - [Docker — étape 26](#docker--étape-26--lapplication-devient-reproductible)
 - [Tests — étape 27](#tests--étape-27--deux-portes-mesurées)
+- [Dashboard — étape 29](#dashboard--étape-29--les-64-runs-deviennent-inspectables)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -45,14 +46,14 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 27 terminée — les régressions ont deux portes explicites.** Les **648
-tests non payants** passent et couvrent **96,06 %** des branches de `app`, au-dessus
-du plancher verrouillé à 95 %. `benchmark.py --gate-against` refuse désormais un
-run partiel, une fixture modifiée, une métrique absente, une perte agrégée supérieure
-à 0,02 ou une perte de Recall@5 par catégorie supérieure à 0,05. Le run réel de la
-configuration livrée reproduit exactement `compress-embedding-d20` (Recall@5 0,768,
-Recall@10 0,805, Recall@20 0,814, MRR 0,810) et passe la porte. Prochaine étape :
-**28, CI/CD**. [Détails](#tests--étape-27--deux-portes-mesurées).
+**Étape 29 terminée — les mesures ont enfin leur dashboard.** Les portes de
+l'étape 27 tournent maintenant dans GitHub Actions : le premier run post-merge sur
+`main` a passé le job qualité/couverture puis le vrai benchmark de régression contre
+Qdrant et le corpus épinglé. Le dashboard hors ligne condense ensuite les **64 runs**
+versionnés en **63 vues étiquetées** : retrieval et latence, qualité des réponses et
+refus, cache et coût d'observabilité. Aucun texte par question ne quitte les JSONL ;
+le navigateur ne reçoit que les agrégats. Prochaine étape : **30, README
+professionnel**. [Ouvrir le dashboard](dashboard/index.html).
 
 **Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Depuis l'étape 25, ce même pipeline est aussi servi par FastAPI ; `scripts/ask.py` reste son client local en ligne de commande.
 
@@ -2030,7 +2031,26 @@ uv run python scripts/benchmark.py --label regression-candidate --top-k 20 `
   --compress embedding --gate-against compress-embedding-d20 --no-save
 ```
 
-L'automatisation de ces commandes dans GitHub Actions reste l'étape 28.
+GitHub Actions exécute désormais la qualité et la couverture sur chaque pull request
+et chaque push vers `main`. Sur `main` et en lancement manuel, un second job récupère
+le corpus épinglé, construit l'index Qdrant et rejoue la porte de régression. Le
+premier run post-merge a passé les deux jobs le 25 octobre 2026.
+
+## Dashboard — étape 29 : les 64 runs deviennent inspectables
+
+[`dashboard/index.html`](dashboard/index.html) s'ouvre directement depuis le disque :
+aucun serveur, CDN, compte ou secret n'est nécessaire. Il présente la configuration
+livrée, un nuage qualité/latence filtrable, le registre des runs avec ventilation par
+catégorie, les bras RAGAS, puis les verdicts cache et observabilité.
+
+La source reste les quatre historiques versionnés dans `data/eval/`. Le générateur
+valide chaque ligne avec son numéro, conserve la ligne la plus récente de chaque
+label et retire `per_question` et `per_probe` du snapshot navigateur. Les 64 lignes
+d'histoire donnent 63 labels uniques ; aucune mesure n'est recalculée par l'interface.
+
+```powershell
+uv run python scripts/build_dashboard.py
+```
 
 ## Premiers constats
 
@@ -2149,6 +2169,9 @@ uv run pytest --cov=app --cov-branch
 # Comparer le retrieval livré à sa baseline enregistrée, sans écrire de nouvelle ligne
 uv run python scripts/benchmark.py --label regression-candidate --top-k 20 --compress embedding --gate-against compress-embedding-d20 --no-save
 
+# Reconstruire le dashboard hors ligne depuis les quatre historiques versionnés
+uv run python scripts/build_dashboard.py
+
 # Servir l'API et sa documentation OpenAPI sur http://127.0.0.1:8000/docs
 uv run uvicorn app.api.main:app --reload
 
@@ -2265,6 +2288,7 @@ docker compose down
 │   ├── eval/         # jeu de questions annoté et historique des runs, versionnés
 │   ├── raw/          # sources locales non versionnées
 │   └── processed/    # données transformées non versionnées
+├── dashboard/        # dashboard de benchmark statique et snapshot agrégé
 ├── docker/           # image de production de l'API
 ├── docs/             # spécifications et plans
 ├── notebooks/        # futures expérimentations
@@ -2293,9 +2317,10 @@ docker compose down
 - [x] **Phase 14 — API professionnelle** : quatre opérations FastAPI livrées et testées (`/query`, `/documents`, `/health`, `/metrics`).
 - [x] **Phase 15 — Observabilité** : une trace JSONL versionnée par requête ; scores, prompt optionnel, tokens, coût configuré et latences par étape, règle O satisfaite à 0,84 ms p95.
 - [x] **Phase 16 — Dockerisation** : image non-root et application Compose API + Qdrant + Redis, construites et vérifiées en conditions réelles.
-- [ ] **Phase 17 — Tests et CI/CD** : portes locales terminées (648 tests, 96,06 %
-  de couverture de branches, benchmark RAG protégé) ; automatisation GitHub Actions
-  restante à l'étape 28.
+- [x] **Phase 17 — Tests et CI/CD** : 648 tests, 96,06 % de couverture de branches,
+  benchmark RAG protégé et deux jobs GitHub Actions passés sur `main`.
+- [x] **Étape 29 — Dashboard de benchmark** : 64 runs versionnés, 63 labels uniques,
+  comparaison retrieval/latence, RAGAS, cache et observabilité dans un rapport hors ligne.
 
 ## Résultats
 
@@ -2352,9 +2377,10 @@ La relevancy suit aussi la longueur de la réponse : lire chaque gain à côté 
 
 ## Qualité et CI
 
-Les contrôles locaux disponibles sont Ruff, mypy, pytest, une couverture de branches
-à 95 %, la porte de régression RAG et pre-commit. La CI GitHub Actions sera ajoutée
-à l'étape 28 ; aucun badge CI n'est affiché avant l'existence du workflow correspondant.
+Les contrôles locaux sont Ruff, mypy, pytest, une couverture de branches à 95 %, la
+porte de régression RAG et pre-commit. GitHub Actions exécute la qualité sur chaque
+pull request/push et la régression réelle sur `main` ou manuellement. Le premier run
+post-merge a passé les deux jobs ; le badge reste réservé à l'étape 30.
 
 Chaque future phase doit mettre à jour dans le même changement :
 
@@ -2369,4 +2395,4 @@ Chaque future phase doit mettre à jour dans le même changement :
 - [Plan global](docs/roadmap.md) — état actuel, correspondance étapes/phases/versions et index des plans par étape
 - [Spécification du socle](docs/superpowers/specs/2026-09-09-project-foundation-design.md)
 - [Plan d'implémentation du socle](docs/superpowers/plans/2026-09-09-project-foundation.md)
-- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 27 rédigées ; les suivantes sont écrites au début de leur étape
+- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 29 rédigées ; la suivante est écrite au début de son étape
