@@ -22,6 +22,7 @@ class Source:
     repo: str
     docs_subdir: str
     base_url: str
+    revision: str
 
 
 SOURCES = [
@@ -30,6 +31,7 @@ SOURCES = [
         repo="https://github.com/fastapi/fastapi.git",
         docs_subdir="docs/en/docs",
         base_url="https://fastapi.tiangolo.com",
+        revision="50113da16fec53b66b80d75e80a89296de4fa5a5",
     ),
 ]
 
@@ -55,6 +57,14 @@ def fetch(source: Source, force: bool) -> None:
                 source.repo,
                 str(clone),
             ],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(clone), "fetch", "--depth", "1", "origin", source.revision],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(clone), "checkout", "--detach", "FETCH_HEAD"],
             check=True,
         )
         subprocess.run(

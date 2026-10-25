@@ -13,7 +13,9 @@ history into enforceable gates: all 648 non-paid tests pass, application branch
 coverage is 96.06% against a 95% floor, and a fresh retrieval benchmark exactly
 reproduces the shipped `compress-embedding-d20` row. The gate rejects partial runs,
 fixture drift, missing metrics, aggregate losses over 0.02, and per-category Recall@5
-losses over 0.05. Step 28 (CI/CD) is next.**
+losses over 0.05. Step 28 (CI/CD) is in progress: its workflow and pinned corpus
+input are implemented locally; the first remote regression run still needs the
+repository's `OPENAI_API_KEY` Actions secret.**
 
 Shipped and verified:
 
@@ -109,7 +111,7 @@ lands rather than promised here. Step 21 took **`v1.1`**.
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-27:
+Detailed, executable plans exist for steps 02-28:
 
 | Step | Plan |
 |---|---|
@@ -136,8 +138,9 @@ Detailed, executable plans exist for steps 02-27:
 | 25 FastAPI | [`2026-10-25-step-25-fastapi.md`](superpowers/plans/2026-10-25-step-25-fastapi.md) |
 | 26 Docker | [`2026-10-25-step-26-docker.md`](superpowers/plans/2026-10-25-step-26-docker.md) |
 | 27 Tests | [`2026-10-25-step-27-tests.md`](superpowers/plans/2026-10-25-step-27-tests.md) |
+| 28 CI/CD | [`2026-10-25-step-28-ci.md`](superpowers/plans/2026-10-25-step-28-ci.md) |
 
-**Steps 28-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements. Writing those plans now would mean inventing the answers — steps 12-23 each answered their own question only by running it, several answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with the recorded results in hand.
+**Steps 29-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements. Writing those plans now would mean inventing the answers — steps 12-23 each answered their own question only by running it, several answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with the recorded results in hand.
 
 ## How a step lands
 
