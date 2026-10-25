@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Measured benchmark history for the Advanced RAG Knowledge Assistant.">
+    <title>RAG benchmark dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to dashboard</a>
+    <header class="hero">
+      <nav aria-label="Dashboard sections">
+        <a class="brand" href="#top">ARKA / LAB 29</a>
+        <div class="nav-links">
+          <a href="#retrieval">Retrieval</a>
+          <a href="#answers">Answers</a>
+          <a href="#systems">Systems</a>
+        </div>
+      </nav>
+      <div class="hero-grid" id="top">
+        <div>
+          <p class="eyebrow">Evidence, not estimates</p>
+          <h1>Every RAG decision,<br><em>measured.</em></h1>
+          <p class="lede">An offline view of the committed experiment history. Compare quality against latency, inspect category trade-offs, and see which ideas actually shipped.</p>
+        </div>
+        <div class="hero-mark" aria-hidden="true">
+          <span>R</span><span>A</span><span>G</span>
+        </div>
+      </div>
+      <div class="snapshot-line">
+        <span id="snapshot-count">Loading snapshot…</span>
+        <span id="snapshot-date"></span>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="scoreboard" aria-labelledby="scoreboard-title">
+        <div class="section-heading">
+          <p class="eyebrow">Shipped configuration</p>
+          <h2 id="scoreboard-title">The current baseline</h2>
+        </div>
+        <div class="metric-grid" id="headline-metrics"></div>
+      </section>
+
+      <section id="retrieval" aria-labelledby="retrieval-title">
+        <div class="section-heading split">
+          <div>
+            <p class="eyebrow">01 / Retrieval</p>
+            <h2 id="retrieval-title">Quality has a cost.</h2>
+          </div>
+          <p>Each point is the newest committed run for one label. The upper-left is the useful frontier: more recall, less latency.</p>
+        </div>
+
+        <div class="controls" aria-label="Retrieval filters">
+          <label>Find a run<input id="run-search" type="search" placeholder="dense, hybrid, compress…"></label>
+          <label>Mode<select id="mode-filter"><option value="all">All modes</option></select></label>
+          <label>Metric<select id="metric-filter"><option value="recall@5">Recall@5</option><option value="recall@10">Recall@10</option><option value="mrr">MRR</option><option value="ndcg@5">NDCG@5</option></select></label>
+        </div>
+
+        <div class="plot-card">
+          <div class="plot-heading"><strong id="plot-title">Recall@5 vs p50 latency</strong><span id="plot-count"></span></div>
+          <svg id="retrieval-plot" viewBox="0 0 960 440" role="img" aria-labelledby="plot-title plot-description"></svg>
+          <p class="sr-only" id="plot-description">Scatter plot comparing retrieval metric score and median latency for matching benchmark runs.</p>
+        </div>
+
+        <div class="table-card">
+          <div class="table-heading"><h3>Run ledger</h3><span>Select a row for category detail</span></div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Run</th><th>Mode</th><th>Recall@5</th><th>Recall@10</th><th>MRR</th><th>p50</th><th>Commit</th></tr></thead>
+              <tbody id="retrieval-rows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="category-card" id="category-detail" aria-live="polite"></div>
+      </section>
+
+      <section id="answers" aria-labelledby="answers-title">
+        <div class="section-heading split">
+          <div>
+            <p class="eyebrow">02 / Generation</p>
+            <h2 id="answers-title">Answers, judged separately.</h2>
+          </div>
+          <p>RAGAS rows use an external judge. Empty cells are unmeasured, never zero. Refusal rates stay beside answer quality.</p>
+        </div>
+        <div class="table-card">
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Run</th><th>Faithfulness</th><th>Relevancy</th><th>Refusal</th><th>Prompt p50</th><th>Latency p50</th></tr></thead>
+              <tbody id="answer-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="systems" aria-labelledby="systems-title">
+        <div class="section-heading">
+          <p class="eyebrow">03 / System evidence</p>
+          <h2 id="systems-title">Fast where it matters.</h2>
+        </div>
+        <div class="system-grid" id="system-cards"></div>
+      </section>
+    </main>
+
+    <footer>
+      <p>Generated from versioned JSONL. No live service, no hidden query, no CDN.</p>
+      <p><code>uv run python scripts/build_dashboard.py</code></p>
+    </footer>
+
+    <script src="data.js"></script>
+    <script src="dashboard.js"></script>
+  </body>
+</html>
