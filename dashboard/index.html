@@ -3,111 +3,173 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Measured benchmark history for the Advanced RAG Knowledge Assistant.">
-    <title>RAG benchmark dashboard</title>
+    <meta name="description" content="Chat with the Advanced RAG Knowledge Assistant and monitor its live performance.">
+    <title>RAG Control Workspace</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <a class="skip-link" href="#main">Skip to dashboard</a>
-    <header class="hero">
-      <nav aria-label="Dashboard sections">
-        <a class="brand" href="#top">ARKA / LAB 29</a>
-        <div class="nav-links">
-          <a href="#retrieval">Retrieval</a>
-          <a href="#answers">Answers</a>
-          <a href="#systems">Systems</a>
-        </div>
-      </nav>
-      <div class="hero-grid" id="top">
-        <div>
-          <p class="eyebrow">Evidence, not estimates</p>
-          <h1>Every RAG decision,<br><em>measured.</em></h1>
-          <p class="lede">An offline view of the committed experiment history. Compare quality against latency, inspect category trade-offs, and see which ideas actually shipped.</p>
-        </div>
-        <div class="hero-mark" aria-hidden="true">
-          <span>R</span><span>A</span><span>G</span>
-        </div>
-      </div>
-      <div class="snapshot-line">
-        <span id="snapshot-count">Loading snapshot…</span>
-        <span id="snapshot-date"></span>
-      </div>
-    </header>
-
-    <main id="main">
-      <section class="scoreboard" aria-labelledby="scoreboard-title">
-        <div class="section-heading">
-          <p class="eyebrow">Shipped configuration</p>
-          <h2 id="scoreboard-title">The current baseline</h2>
-        </div>
-        <div class="metric-grid" id="headline-metrics"></div>
-      </section>
-
-      <section id="retrieval" aria-labelledby="retrieval-title">
-        <div class="section-heading split">
-          <div>
-            <p class="eyebrow">01 / Retrieval</p>
-            <h2 id="retrieval-title">Quality has a cost.</h2>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Conversation history">
+        <div class="history-heading"><span>Chats</span><button class="history-action new-conversation" type="button" aria-label="Start a new chat" title="New chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+        <button class="new-chat-button new-conversation" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.75h14v10.5H9l-4 3v-13.5ZM12 8v6m-3-3h6"/></svg><span>New chat</span></button>
+        <div class="history-label">Recent</div>
+        <div class="conversation-list" id="conversation-list" aria-label="Recent chats"></div>
+        <div class="sidebar-footer">
+          <div class="service-state" id="service-state" role="status">
+            <span class="status-dot"></span>
+            <span><strong>Checking service</strong><small>Live API status</small></span>
           </div>
-          <p>Each point is the newest committed run for one label. The upper-left is the useful frontier: more recall, less latency.</p>
+          <div class="account-card"><span class="account-avatar" aria-hidden="true">A</span><span><strong>Your workspace</strong><small>History on this browser</small></span></div>
         </div>
+      </aside>
 
-        <div class="controls" aria-label="Retrieval filters">
-          <label>Find a run<input id="run-search" type="search" placeholder="dense, hybrid, compress…"></label>
-          <label>Mode<select id="mode-filter"><option value="all">All modes</option></select></label>
-          <label>Metric<select id="metric-filter"><option value="recall@5">Recall@5</option><option value="recall@10">Recall@10</option><option value="mrr">MRR</option><option value="ndcg@5">NDCG@5</option></select></label>
-        </div>
-
-        <div class="plot-card">
-          <div class="plot-heading"><strong id="plot-title">Recall@5 vs p50 latency</strong><span id="plot-count"></span></div>
-          <svg id="retrieval-plot" viewBox="0 0 960 440" role="img" aria-labelledby="plot-title plot-description"></svg>
-          <p class="sr-only" id="plot-description">Scatter plot comparing retrieval metric score and median latency for matching benchmark runs.</p>
-        </div>
-
-        <div class="table-card">
-          <div class="table-heading"><h3>Run ledger</h3><span>Select a row for category detail</span></div>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th>Run</th><th>Mode</th><th>Recall@5</th><th>Recall@10</th><th>MRR</th><th>p50</th><th>Commit</th></tr></thead>
-              <tbody id="retrieval-rows"></tbody>
-            </table>
+      <main id="main">
+        <header class="topbar">
+          <a class="topbar-brand" href="#chat" aria-label="RAG Control home"><span class="brand-mark" aria-hidden="true">R</span><strong>RAG Control</strong></a>
+          <nav class="topbar-nav" aria-label="Workspace navigation">
+            <a class="nav-link active" href="#chat" data-view="chat" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.75h14v10.5H9l-4 3v-13.5Z"/></svg><span>Chat</span></a>
+            <a class="nav-link" href="#configuration" data-view="configuration"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-4v2m0 11v2m7.5-7.5h-2m-11 0h-2m12.8-5.3-1.4 1.4M8.1 15.9l-1.4 1.4m10.6 0-1.4-1.4M8.1 8.1 6.7 6.7"/></svg><span>Configuration</span></a>
+            <a class="nav-link" href="#overview" data-view="overview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 13h5v6H5v-6Zm9-8h5v14h-5V5ZM5 5h5v4H5V5Z"/></svg><span>Overview</span></a>
+          </nav>
+          <div class="topbar-actions">
+            <span class="last-updated" id="last-updated">Connecting...</span>
+            <button class="icon-button" id="refresh-dashboard" type="button" aria-label="Refresh dashboard" title="Refresh dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a7 7 0 1 0 .2 7.5M19 4v4h-4"/></svg></button>
           </div>
-        </div>
+        </header>
 
-        <div class="category-card" id="category-detail" aria-live="polite"></div>
-      </section>
-
-      <section id="answers" aria-labelledby="answers-title">
-        <div class="section-heading split">
-          <div>
-            <p class="eyebrow">02 / Generation</p>
-            <h2 id="answers-title">Answers, judged separately.</h2>
+        <section class="chat-layout workspace active" id="chat" data-title="Knowledge assistant" data-kicker="Workspace" aria-labelledby="chat-title">
+          <aside class="library-panel" aria-label="Knowledge sources">
+            <div class="panel-heading compact"><div><p class="eyebrow">Library</p><h2>Knowledge</h2></div></div>
+            <div class="library-body">
+              <label class="source-search" for="source-search"><span aria-hidden="true">&#8981;</span><input id="source-search" type="search" placeholder="Filter sources" autocomplete="off"></label>
+              <p class="pane-label">Indexed collection</p>
+              <button class="source-item selected" type="button"><span class="file-icon">MD</span><span><strong>FastAPI docs</strong><small>Primary corpus</small></span></button>
+              <button class="source-item" type="button"><span class="file-icon">API</span><span><strong>API reference</strong><small>Live endpoints</small></span></button>
+              <dl class="library-summary"><dt>Collection</dt><dd>chunks</dd><dt>Retrieval</dt><dd>Hybrid + rerank</dd></dl>
+            </div>
+          </aside>
+          <div class="chat-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">Conversation</p><h2 id="chat-title">Grounded answers, with sources.</h2></div>
+              <button class="text-button new-conversation" type="button">New conversation</button>
+            </div>
+            <div class="messages" id="messages" aria-live="polite">
+              <article class="message assistant-message">
+                <div class="avatar" aria-hidden="true">R</div>
+                <div class="message-content">
+                  <span class="message-author">Assistant</span>
+                  <p>I answer from the indexed knowledge base and show the sources used. What would you like to understand?</p>
+                </div>
+              </article>
+            </div>
+            <div class="suggestions" id="suggestions" aria-label="Suggested questions">
+              <button type="button">How does dependency injection work?</button>
+              <button type="button">How do I test an API endpoint?</button>
+              <button type="button">Explain background tasks.</button>
+            </div>
+            <form class="composer" id="chat-form">
+              <label class="sr-only" for="question">Ask the knowledge base</label>
+              <textarea id="question" name="question" rows="1" maxlength="2000" placeholder="Ask a question about your documentation..." required></textarea>
+              <button class="send-button" type="submit" aria-label="Send question"><span>Send</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6-7-1Z"/></svg></button>
+            </form>
+            <p class="composer-note">Answers can be wrong. Check the cited source before acting.</p>
           </div>
-          <p>RAGAS rows use an external judge. Empty cells are unmeasured, never zero. Refusal rates stay beside answer quality.</p>
-        </div>
-        <div class="table-card">
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th>Run</th><th>Faithfulness</th><th>Relevancy</th><th>Refusal</th><th>Prompt p50</th><th>Latency p50</th></tr></thead>
-              <tbody id="answer-rows"></tbody>
-            </table>
+
+          <aside class="context-panel" aria-label="Live system summary">
+            <div class="context-title"><p class="eyebrow">Live context</p><span class="live-pill">Live</span></div>
+            <div class="context-block"><span>Vector index</span><strong id="qdrant-state">Checking</strong><small>Qdrant retrieval service</small></div>
+            <div class="context-block"><span>Response cache</span><strong id="redis-state">Checking</strong><small>Exact-match acceleration</small></div>
+            <div class="context-block accent-block"><span>Median response</span><strong id="side-latency">--</strong><small>Across recorded live queries</small></div>
+            <div class="tip"><span aria-hidden="true">i</span><p>Follow-up questions keep the current conversation as context.</p></div>
+          </aside>
+        </section>
+
+        <section class="configuration-section workspace" id="configuration" data-title="Configuration" data-kicker="Workspace settings" aria-labelledby="configuration-title" hidden>
+          <div class="section-heading configuration-heading">
+            <div><p class="eyebrow">Workspace settings</p><h2 id="configuration-title">Configure your assistant</h2></div>
+            <p>Connect the API used for questions. Credentials remain in this browser tab.</p>
           </div>
-        </div>
-      </section>
+          <form class="configuration-grid" id="settings-form">
+            <article class="configuration-card connection-card">
+              <div class="configuration-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 15.5 5 19m10.5-10.5L19 5M7 12a5 5 0 0 1 5-5h2m3 5a5 5 0 0 1-5 5h-2"/></svg></div>
+              <div><p class="eyebrow">Connection</p><h3>Backend API</h3><p class="card-description">Choose the service endpoint used for retrieval and generation.</p></div>
+              <label for="api-url">API base URL</label>
+              <input id="api-url" name="api-url" type="url" placeholder="https://your-api.example.com">
+              <small>Leave blank to use the same deployment that served this page.</small>
+              <label for="api-key">API key</label>
+              <input id="api-key" name="api-key" type="password" autocomplete="off" placeholder="Required for questions">
+              <small>Stored in session storage and removed when the browser tab closes.</small>
+              <button class="primary-button" id="save-settings" type="submit">Save connection</button>
+            </article>
+            <article class="configuration-card">
+              <div class="configuration-icon emerald"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h5.5v13H5v-13Zm5.5 1.5 4-1.5v13l-4-1.5m4-10 4.5-1.5v13l-4.5-1.5"/></svg></div>
+              <div><p class="eyebrow">Knowledge</p><h3>Retrieval pipeline</h3><p class="card-description">The active production configuration exposed by this deployment.</p></div>
+              <dl class="configuration-list"><div><dt>Collection</dt><dd>chunks</dd></div><div><dt>Search mode</dt><dd>Hybrid retrieval</dd></div><div><dt>Compression</dt><dd>Embedding · depth 20</dd></div><div><dt>Citations</dt><dd><span class="status-badge">Enabled</span></dd></div></dl>
+            </article>
+            <article class="configuration-card">
+              <div class="configuration-icon amber"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.7 8.1 7 10 4.3-1.9 7-5.4 7-10V6l-7-3Zm-3 9 2 2 4-4"/></svg></div>
+              <div><p class="eyebrow">Safety</p><h3>Response policy</h3><p class="card-description">Grounded answers with refusal when the indexed context is insufficient.</p></div>
+              <dl class="configuration-list"><div><dt>Grounding</dt><dd><span class="status-badge amber-badge">Required</span></dd></div><div><dt>Conversation turns</dt><dd>4 retained</dd></div><div><dt>Content logging</dt><dd>Disabled</dd></div></dl>
+            </article>
+          </form>
+        </section>
 
-      <section id="systems" aria-labelledby="systems-title">
-        <div class="section-heading">
-          <p class="eyebrow">03 / System evidence</p>
-          <h2 id="systems-title">Fast where it matters.</h2>
-        </div>
-        <div class="system-grid" id="system-cards"></div>
-      </section>
-    </main>
+        <section class="dashboard-section workspace" id="overview" data-title="Runtime overview" data-kicker="Operations" aria-labelledby="overview-title" hidden>
+          <div class="section-heading">
+            <div><p class="eyebrow">Runtime overview</p><h2 id="overview-title">What the service is doing.</h2></div>
+            <p>Privacy-safe aggregates from the deployed API. No questions or answer text are exposed here.</p>
+          </div>
+          <div class="metric-grid">
+            <article class="metric-card primary"><span>Total queries</span><strong id="metric-total">--</strong><small id="metric-generated">Waiting for data</small></article>
+            <article class="metric-card"><span>Success rate</span><strong id="metric-success">--</strong><small id="metric-refused">Generated answers</small></article>
+            <article class="metric-card"><span>p50 latency</span><strong id="metric-latency">--</strong><small id="metric-p95">p95 --</small></article>
+            <article class="metric-card"><span>Cache hit rate</span><strong id="metric-cache">--</strong><small id="metric-cache-count">Exact + semantic</small></article>
+          </div>
+          <div class="operations-grid">
+            <article class="operations-card">
+              <div class="card-heading"><h3>Answer outcomes</h3><span id="outcome-total">0 requests</span></div>
+              <div class="outcome-bar" aria-label="Answer outcome distribution">
+                <span class="generated-bar" id="generated-bar"></span><span class="refused-bar" id="refused-bar"></span><span class="failed-bar" id="failed-bar"></span>
+              </div>
+              <div class="legend">
+                <span><i class="generated-key"></i>Generated <strong id="generated-count">0</strong></span>
+                <span><i class="refused-key"></i>Refused <strong id="refused-count">0</strong></span>
+                <span><i class="failed-key"></i>Failed <strong id="failed-count">0</strong></span>
+              </div>
+            </article>
+            <article class="operations-card usage-card">
+              <div class="card-heading"><h3>Model usage</h3><span>Since trace start</span></div>
+              <dl>
+                <div><dt>Prompt tokens</dt><dd id="prompt-tokens">--</dd></div>
+                <div><dt>Completion tokens</dt><dd id="completion-tokens">--</dd></div>
+                <div><dt>Known cost</dt><dd id="known-cost">--</dd></div>
+                <div><dt>Follow-ups</dt><dd id="follow-ups">--</dd></div>
+              </dl>
+            </article>
+          </div>
+        </section>
 
-    <footer>
-      <p>Generated from versioned JSONL. No live service, no hidden query, no CDN.</p>
-      <p><code>uv run python scripts/build_dashboard.py</code></p>
-    </footer>
+        <section class="benchmark-section workspace" id="benchmarks" data-parent="overview" data-title="Runtime overview" data-kicker="Operations" aria-labelledby="benchmark-title" hidden>
+          <div class="section-heading">
+            <div><p class="eyebrow">Committed evidence</p><h2 id="benchmark-title">The configuration earned its place.</h2></div>
+            <p>Offline benchmark results are kept beside live operations so quality, speed, and production behavior stay visible together.</p>
+          </div>
+          <div class="benchmark-grid" id="benchmark-cards"></div>
+          <div class="run-table-wrap">
+            <div class="card-heading"><h3>Retrieval run ledger</h3><span id="snapshot-date">Versioned JSONL snapshot</span></div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Run</th><th>Mode</th><th>Recall@5</th><th>Recall@10</th><th>MRR</th><th>p50</th></tr></thead>
+                <tbody id="benchmark-rows"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <footer><span>RAG Control / Advanced RAG Knowledge Assistant</span><a href="/docs">API documentation &#8599;</a></footer>
+      </main>
+    </div>
 
     <script src="data.js"></script>
     <script src="dashboard.js"></script>

@@ -1,4 +1,17 @@
 services:
+  rag-ui:
+    build:
+      context: dashboard
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${RAG_UI_PORT:-8080}:80"
+    depends_on:
+      rag-api:
+        condition: service_healthy
+        restart: true
+
   rag-api:
     build:
       context: .
