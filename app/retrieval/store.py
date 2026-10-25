@@ -10,7 +10,16 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PayloadSchemaType, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PayloadSchemaType,
+    PointIdsList,
+    PointStruct,
+    VectorParams,
+)
 
 from app.core.config import Settings, get_settings
 from app.models.chunks import Chunk
@@ -91,6 +100,50 @@ def upsert_chunks(
     for start in range(0, len(points), batch_size):
         client.upsert(collection_name=name, points=points[start : start + batch_size], wait=True)
     return len(points)
+
+
+def replace_document_chunks(
+    client: QdrantClient,
+    name: str,
+    chunks: Sequence[Chunk],
+    vectors: Sequence[Sequence[float]],
+) -> int:
+    """Replace every indexed chunk for one document, including stale tail chunks."""
+    document_ids = {chunk.document_id for chunk in chunks}
+    if len(document_ids) != 1:
+        raise ValueError("replacement requires chunks from exactly one document")
+    if len(chunks) != len(vectors):
+        raise ValueError(f"{len(chunks)} chunks but {len(vectors)} vectors")
+
+    ensure_collection(client, name, len(vectors[0]))
+    document_filter = Filter(
+        must=[FieldCondition(key="document_id", match=MatchValue(value=next(iter(document_ids))))]
+    )
+    old_ids: set[int | str | uuid.UUID] = set()
+    offset = None
+    while True:
+        records, offset = client.scroll(
+            collection_name=name,
+            scroll_filter=document_filter,
+            limit=BATCH_SIZE,
+            offset=offset,
+            with_payload=False,
+            with_vectors=False,
+        )
+        old_ids.update(record.id for record in records)
+        if offset is None:
+            break
+
+    count = upsert_chunks(client, name, chunks, vectors)
+    new_ids = {point_id(chunk.chunk_id) for chunk in chunks}
+    stale_ids = old_ids - new_ids
+    if stale_ids:
+        client.delete(
+            collection_name=name,
+            points_selector=PointIdsList(points=list(stale_ids)),
+            wait=True,
+        )
+    return count
 
 
 def collection_stats(client: QdrantClient, name: str) -> dict[str, Any]:

@@ -23,6 +23,7 @@
 - [Garde-fous — étape 22](#garde-fous--étape-22--le-refus-devient-un-champ-et-aucune-défense-ne-gagne-sa-place)
 - [Cache — étape 23](#cache--étape-23--exact-disponible-sémantique-rejeté)
 - [Observabilité — étape 24](#observabilité--étape-24--une-trace-vérifiable-par-requête)
+- [API FastAPI — étape 25](#api-fastapi--étape-25--le-pipeline-devient-un-service)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -42,15 +43,15 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 24 terminée — une trace locale par requête.** La requête originale et
-résolue, les chunks classés et leurs scores, l'usage, le coût configuré, les
-latences par étape, le refus et la couche de cache sont écrits dans un JSONL
-versionné. Le prompt et la réponse demandent un second opt-in. Sur 1 000 traces
-représentatives, 1 000 sont relues et validées ; écriture p50 **0,45 ms**, p95
-**0,84 ms** contre la limite de 5 ms : règle O satisfaite. Prochaine étape :
-**25, API FastAPI**. [Détails](#observabilité--étape-24--une-trace-vérifiable-par-requête).
+**Étape 25 terminée — le pipeline est exposé par FastAPI.** `POST /query`
+sert l'objet `Answer` existant à travers le cache, `POST /documents` remplace un
+document dans Qdrant puis invalide les réponses, `GET /health` vérifie les
+dépendances configurées et `GET /metrics` agrège les traces de l'étape 24 sans
+exposer leur contenu. Le contrat HTTP compte 8 tests sans réseau ; la suite
+complète reste la preuve de non-régression. Prochaine étape : **26,
+Dockerisation**. [Détails](#api-fastapi--étape-25--le-pipeline-devient-un-service).
 
-**Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Aucun endpoint HTTP n'est encore exposé — l'API FastAPI est l'étape 25 ; d'ici là le point d'entrée est `scripts/ask.py`.
+**Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Depuis l'étape 25, ce même pipeline est aussi servi par FastAPI ; `scripts/ask.py` reste son client local en ligne de commande.
 
 **Étape 21 terminée — RAGAS : un juge note enfin la réponse, pas le retrieval.** `judge()` isole `ragas` dans un seul module et note faithfulness et relevancy sur les contextes réellement envoyés au modèle, derrière une porte de quatre fixtures rejouée à chaque changement de juge. Le verdict tient en deux phrases. **En moyenne, le juge donne raison à Recall@context** : le vivier compressé de l'étape 20 fait monter la relevancy de 0,649 à **0,705**, onze fois le bruit mesuré en répétant le contrôle, sans toucher la faithfulness. **Sur `q018`, il lui donne tort** : 0,883 sans compression, **0,000** avec, dans les deux runs du contrôle. La pénalité de longueur α qui devait réconcilier les deux n'est pas promue — α 0,5 rend `code` (0,725 → 0,849) et `q018`, mais rend aussi tout le gain de `multi_doc` (0,812 → 0,484) — et la prédiction pré-enregistrée, qui annonçait une perte sur `code`, était fausse. `COMPRESS_LENGTH_PENALTY` reste 0,0. Les bras tournent sur `gpt-4o-mini` jugé par `gpt-4o`, via GitHub derrière OmniRoute, sans context precision : voir [la section de l'étape 21](#évaluation-de-la-génération--étape-21--ragas-et-ce-que-recallcontext-ne-voyait-pas).
 
@@ -80,6 +81,7 @@ Fonctionnalités disponibles :
 - banc d'essai côté réponse via `scripts/benchmark_answers.py` : taux de refus, caractères de contexte et `prompt_tokens` réellement facturés, une ligne par run dans `data/eval/answers.jsonl`, séparé de `results.jsonl` dont les lignes sont des runs de retrieval ;
 - juge de génération via `app.evaluation.judge` : faithfulness, relevancy et context precision sans référence (RAGAS 0.4, seul module qui importe `ragas`), `--ragas` sur `benchmark_answers.py`, relevancy vectorisée en local par fastembed, porte de calibration en quatre fixtures sous `pytest -m requires_api` ;
 - métriques et banc d'essai via `app.evaluation.metrics`, `app.evaluation.benchmark` et `scripts/benchmark.py` : Recall@K, Precision@K, MRR, Hit Rate@K et NDCG@K sur des documents dédupliqués, ventilation par catégorie, latence p50/p95, historique versionné dans `data/eval/results.jsonl` avec le commit git de chaque run.
+- API via `app.api.main` : `POST /query`, `POST /documents`, `GET /health` et `GET /metrics`, avec schémas OpenAPI, validation Pydantic et tests sans réseau.
 
 **Garantie de conservation du code.** Tout bloc de code — clôturé, indenté ou en ligne — traverse le nettoyage à l'octet près. Les étapes suivantes en dépendent : la recherche par mots-clés (étape 14) ne retrouve `HTTPException(status_code=422)` que si cette chaîne existe encore, intacte, dans l'index. Seule exception, mesurée et testée : les blocs ` ```console ` perdent le balisage HTML de coloration du terminal, qui coupait justement ces chaînes en morceaux.
 
@@ -1922,6 +1924,45 @@ et l'instrumentation automatique attendent l'API et son déploiement (étapes
 25-26), où un collecteur aura réellement quelque part où recevoir les spans.
 
 
+## API FastAPI — étape 25 : le pipeline devient un service
+
+L'application `app.api.main:app` enveloppe les composants existants : aucune
+seconde chaîne RAG ne vit dans la couche HTTP. Les opérations bloquantes restent
+des fonctions synchrones, que FastAPI exécute dans son pool de workers.
+
+```powershell
+$env:RAG_API_KEY = "replace-with-a-long-random-secret"
+uv run uvicorn app.api.main:app --reload
+```
+
+L'interface OpenAPI est alors disponible sur <http://127.0.0.1:8000/docs>.
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/query `
+  -Headers @{ "X-API-Key" = $env:RAG_API_KEY } `
+  -ContentType application/json `
+  -Body '{"question":"How does FastAPI dependency injection work?"}'
+
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/metrics
+```
+
+Les deux routes `POST` exigent `X-API-Key`, comparé à `RAG_API_KEY`; elles
+échouent fermées si la clé serveur n'est pas configurée. `POST /query` accepte
+aussi `history` et les `filters` de métadonnées. Le champ
+interne `contexts`, utile au juge hors ligne, est exclu de la réponse HTTP.
+`POST /documents` accepte un document Markdown identifié par l'appelant, le
+nettoie, le découpe et remplace ses chunks dans Qdrant sans supprimer l'ancienne
+version avant que l'upsert réussisse. Il invalide ensuite l'index BM25 et avance
+atomiquement la révision du cache, ce qui rend inaccessibles les réponses qu'une
+requête concurrente finirait d'écrire. `GET /health` vérifie Qdrant et Redis seulement
+si Redis est configuré. `GET /metrics` agrège le JSONL de traces sans rendre les
+questions, prompts ou réponses ; sans `TRACE_PATH`, il rend des compteurs nuls.
+
+La couche ajoute des tests ciblés des contrats HTTP, de l'orchestration
+d'indexation et du remplacement Qdrant. Elle n'ajoute aucune
+dépendance : FastAPI et Uvicorn étaient déjà verrouillés depuis le socle.
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -2030,6 +2071,9 @@ uv run mypy app
 # Exécuter les tests
 uv run pytest
 
+# Servir l'API et sa documentation OpenAPI sur http://127.0.0.1:8000/docs
+uv run uvicorn app.api.main:app --reload
+
 # Installer puis exécuter les hooks locaux
 uv run pre-commit install
 uv run pre-commit run --all-files
@@ -2131,7 +2175,7 @@ docker compose down
 ```text
 .
 ├── app/
-│   ├── api/          # future API FastAPI
+│   ├── api/          # application FastAPI et contrats HTTP
 │   ├── core/         # configuration partagée
 │   ├── evaluation/   # jeu annoté, métriques de retrieval, banc d'essai, juge RAGAS
 │   ├── generation/   # contexte, appel au modèle, citations, orchestration
@@ -2168,7 +2212,7 @@ docker compose down
 - [x] **Phase 11 — Évaluation complète** : mesurer retrieval et génération (faite ; faithfulness et relevancy par RAGAS, le juge confirme Recall@context en moyenne — relevancy 0,649 → 0,705 — et le contredit sur `q018`, 0,883 → 0,000 ; `COMPRESS_LENGTH_PENALTY` reste 0,0).
 - [x] **Phase 12 — Guardrails** : gérer le manque de contexte et les entrées hostiles (faite ; `Answer.refusal` livré, seuil de score rejeté hors ligne — 0 sur 7 —, prompt v3 et détecteur mesurés et non activés : le prompt v2 tient déjà 79 attaques sur 80).
 - [x] **Phase 13 — Cache** : cache exact mesuré (30/30 réponses identiques, p50 19,8 ms) ; sémantique rejeté (0/38 paraphrases).
-- [ ] **Phase 14 — API professionnelle** : exposer les opérations FastAPI.
+- [x] **Phase 14 — API professionnelle** : quatre opérations FastAPI livrées et testées (`/query`, `/documents`, `/health`, `/metrics`).
 - [x] **Phase 15 — Observabilité** : une trace JSONL versionnée par requête ; scores, prompt optionnel, tokens, coût configuré et latences par étape, règle O satisfaite à 0,84 ms p95.
 - [ ] **Phase 16 — Dockerisation** : conteneuriser l'application complète.
 - [ ] **Phase 17 — Tests et CI/CD** : automatiser les régressions et les builds.
@@ -2243,4 +2287,4 @@ Chaque future phase doit mettre à jour dans le même changement :
 - [Plan global](docs/roadmap.md) — état actuel, correspondance étapes/phases/versions et index des plans par étape
 - [Spécification du socle](docs/superpowers/specs/2026-09-09-project-foundation-design.md)
 - [Plan d'implémentation du socle](docs/superpowers/plans/2026-09-09-project-foundation.md)
-- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 19 rédigées ; les suivantes sont écrites au début de leur étape
+- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 25 rédigées ; les suivantes sont écrites au début de leur étape

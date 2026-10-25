@@ -8,12 +8,11 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-24 are done. Step 24 writes one schema-versioned JSONL
-trace per query: resolved query, ranked chunks and scores, prompt/response when
-explicitly enabled, tokens, configured cost, stage latency, refusal, cache and
-failure. Rule O passes: 1,000/1,000 representative traces validate, at 0.45 ms
-p50 and 0.84 ms p95 append latency against a 5 ms ceiling. Step 25 (FastAPI) is
-next.**
+**Phase 0 and steps 02-25 are done. Step 25 exposes the existing pipeline as a
+FastAPI service: query, single-document replacement, dependency health and
+content-free operational metrics. The HTTP layer is dependency-injectable and
+tested without network access; Qdrant replacement is also covered against the
+live local service. Step 26 (Docker) is next.**
 
 Shipped and verified:
 
@@ -47,8 +46,9 @@ Shipped and verified:
 | Cache | `app/generation/cache.py`, `data/eval/cache_pairs.jsonl`, `scripts/benchmark_cache.py` ? 30/30 exact hits byte-identical, p50 19.8 ms, p95 101.7 ms; cold refusals 8; generation $0.008967 -> $0.001517. Rule E passes; Rule S fails (0/38 at 0.899832), semantic disabled. |
 | Per-query observability | `app/observability/trace.py`, `scripts/trace_report.py`, `data/eval/observability.jsonl` — one versioned trace at the answer/cache orchestration seam; 1,000/1,000 representative JSONL records validate, p50 0.45 ms, p95 0.84 ms. Prompt and response content require explicit opt-in. |
 | Metadata filtering | `app/ingestion/loader.py`, `app/retrieval/search.py` — `doc_type` derived from the corpus layout, indexed, filterable through a generic `filters=` mapping; per-facet recall and an oracle run recording the ceiling on facet routing at **+0.000 Recall@5** |
+| FastAPI service | `app/api/{main,models}.py`, `app/ingestion/index.py`, `app/observability/metrics.py` — `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`; existing pipeline, cache and traces reused, 10 endpoint/index tests plus Qdrant replacement coverage, no new dependency. |
 
-The loop is closed, verified and measured: a question goes in, a grounded answer with resolved citations comes out of `scripts/ask.py`, and 38 answerable questions give it a score. No HTTP endpoint yet — that is step 25.
+The loop is closed, verified, measured and served: a question goes in through `POST /query`, and the existing pipeline returns a grounded answer with resolved citations. The CLI remains available through `scripts/ask.py`.
 
 Four things later steps own:
 
@@ -92,7 +92,7 @@ Four things later steps own:
 | 22 | Phase 12 — Guardrails | `v1.6` | Refuses when retrieval is weak; survives injected instructions in documents. **Done, and the brief lost twice.** The score gate fails offline (0 of 7 caught), and every one of the 8 answerable refusals had a relevant document in context. Prompt v2 already holds 79 of 80 planted attacks, so prompt v3 and the detector have nothing to defend: both stay off. The one shipped change is `Answer.refusal`. |
 | 23 | Phase 13 - Cache | `v1.2` | Done: 30/30 stored answers identical, hit p50 19.8 ms versus matched cold 2,622 ms; 8 refusals; generation cost down 83.1%. Rule E passes. Rule S fails, semantic remains off. |
 | 24 | Phase 15 — Observability | — | **Done:** one privacy-controlled JSONL trace per query; ranked scores, optional prompt/response, tokens, configured cost, stage latency, cache/refusal/failure. Rule O passes at 0.84 ms p95 for 1,000/1,000 valid records. |
-| 25 | Phase 14 — FastAPI | `v1.0` | `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`. |
+| 25 | Phase 14 — FastAPI | — | **Done:** `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`; OpenAPI validation, sanitized service failures, document replacement and cache invalidation. |
 | 26-28 | Phase 16-17 — Docker, tests, CI | `v1.0` | `docker compose up` and a green pipeline with RAG regression gates. |
 | 29-30 | — | — | Benchmark dashboard and the README that tells the whole story. |
 
@@ -104,7 +104,7 @@ lands rather than promised here. Step 21 took **`v1.1`**.
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-24:
+Detailed, executable plans exist for steps 02-25:
 
 | Step | Plan |
 |---|---|
@@ -128,8 +128,9 @@ Detailed, executable plans exist for steps 02-24:
 | 22 Guardrails | [`2026-09-18-step-22-guardrails.md`](superpowers/plans/2026-09-18-step-22-guardrails.md), design: [`2026-09-17-guardrails-design.md`](superpowers/specs/2026-09-17-guardrails-design.md) |
 | 23 Cache | [`2026-09-30-step-23-cache.md`](superpowers/plans/2026-09-30-step-23-cache.md), design: [`2026-09-30-cache-design.md`](superpowers/specs/2026-09-30-cache-design.md) |
 | 24 Observability | [`2026-10-23-step-24-observability.md`](superpowers/plans/2026-10-23-step-24-observability.md), design: [`2026-10-23-observability-design.md`](superpowers/specs/2026-10-23-observability-design.md) |
+| 25 FastAPI | [`2026-10-25-step-25-fastapi.md`](superpowers/plans/2026-10-25-step-25-fastapi.md) |
 
-**Steps 25-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements. Writing those plans now would mean inventing the answers — steps 12-23 each answered their own question only by running it, several answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with the recorded results in hand.
+**Steps 26-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements. Writing those plans now would mean inventing the answers — steps 12-23 each answered their own question only by running it, several answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with the recorded results in hand.
 
 ## How a step lands
 
@@ -168,10 +169,11 @@ app/
 ├── generation/citations.py   # 09  parse and validate [n] references
 ├── generation/compress.py    # 20  ranked chunks -> shorter ranked chunks, to a budget
 ├── observability/trace.py     # 24  query -> versioned local operational trace
+├── observability/metrics.py   # 25  traces -> content-free operational aggregate
 ├── evaluation/dataset.py     # 10  load and validate the eval set
 ├── evaluation/metrics.py     # 11  recall@k, precision@k, mrr, ndcg, hit rate
 ├── evaluation/benchmark.py   # 11  run the set, emit a markdown row
-└── api/                      # 25  FastAPI, last
+└── api/{main,models}.py      # 25  FastAPI application and HTTP contracts
 scripts/
 ├── fetch_corpus.py           # 02
 ├── index_corpus.py           # 06

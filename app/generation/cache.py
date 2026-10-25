@@ -26,6 +26,7 @@ from app.retrieval.search import default_embedder
 PREFIX = "rag:cache:"
 ANSWER_PREFIX = PREFIX + "answer:"
 QVEC = PREFIX + "qvec"
+CORPUS_REVISION = PREFIX + "corpus_revision"
 # A dead Redis costs at most this per call, never a hang.
 TIMEOUT_S = 0.2
 
@@ -66,7 +67,7 @@ def _digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def fingerprint(settings: Settings, kwargs: Mapping[str, Any]) -> str:
+def fingerprint(settings: Settings, kwargs: Mapping[str, Any], *, corpus_revision: int = 0) -> str:
     """Everything that shapes an answer except the question: a paraphrase may only
     hit an answer produced under the same fingerprint.
 
@@ -74,7 +75,13 @@ def fingerprint(settings: Settings, kwargs: Mapping[str, Any]) -> str:
     and ``top_k=5`` are two keys for one answer. That costs a miss, never a stale
     hit, and resolving them here would duplicate answer_question()'s defaults.
     """
-    return _digest({"settings": keyed_settings(settings), "kwargs": dict(kwargs)})
+    return _digest(
+        {
+            "settings": keyed_settings(settings),
+            "kwargs": dict(kwargs),
+            "corpus_revision": corpus_revision,
+        }
+    )
 
 
 def cache_key(
@@ -82,6 +89,8 @@ def cache_key(
     history: Sequence[Mapping[str, str]] | None,
     settings: Settings,
     kwargs: Mapping[str, Any],
+    *,
+    corpus_revision: int = 0,
 ) -> str:
     """The exact-layer key. Whitespace collapsed, case kept: ``Depends`` and
     ``depends`` are different things in these docs, and paraphrase is the
@@ -91,7 +100,7 @@ def cache_key(
         {
             "question": " ".join(question.split()),
             "history": turns,
-            "fp": fingerprint(settings, kwargs),
+            "fp": fingerprint(settings, kwargs, corpus_revision=corpus_revision),
         }
     )
 
@@ -100,6 +109,17 @@ def connect(settings: Settings) -> Redis:
     return Redis.from_url(
         settings.redis_url, socket_timeout=TIMEOUT_S, socket_connect_timeout=TIMEOUT_S
     )
+
+
+def bump_corpus_revision(client: Redis | None = None, *, settings: Settings | None = None) -> int:
+    """Atomically move future lookups to a fresh cache namespace."""
+    settings = settings or get_settings()
+    if client is None:
+        if not settings.redis_url:
+            return 0
+        client = connect(settings)
+    revision: Any = client.incr(CORPUS_REVISION)
+    return int(revision)
 
 
 def similarity_floor(threshold: float) -> float:
@@ -224,8 +244,6 @@ def cached_answer(
         # sqlite embedding cache.
         return (embedder or default_embedder(settings))(question)
 
-    key = cache_key(question, history, settings, kwargs)
-    fp = fingerprint(settings, kwargs)
     # ponytail: follow-ups get exact lookups only. Assumption, not measurement: a
     # semantic hit on a follow-up needs the history resolved first (one LLM call,
     # ~1-2 s) before we know whether it hits, and we expect repeated follow-ups
@@ -235,6 +253,10 @@ def cached_answer(
     threshold = settings.cache_semantic_threshold
 
     try:
+        revision_value: Any = client.get(CORPUS_REVISION)
+        revision = int(revision_value or 0)
+        key = cache_key(question, history, settings, kwargs, corpus_revision=revision)
+        fp = fingerprint(settings, kwargs, corpus_revision=revision)
         hit, layer = _stored(client, key), "exact"
         if hit is None and indexable and threshold is not None:
             hit, layer = _nearest(client, vector(), fp, threshold), "semantic"
