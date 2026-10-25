@@ -1,0 +1,7 @@
+*
+!app/
+!app/**
+!scripts/
+!scripts/**
+!pyproject.toml
+!uv.lock

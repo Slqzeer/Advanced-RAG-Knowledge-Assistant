@@ -8,11 +8,12 @@ The single place that answers: where is this project, what comes next, and why.
 
 ## Current state
 
-**Phase 0 and steps 02-25 are done. Step 25 exposes the existing pipeline as a
-FastAPI service: query, single-document replacement, dependency health and
-content-free operational metrics. The HTTP layer is dependency-injectable and
-tested without network access; Qdrant replacement is also covered against the
-live local service. Step 26 (Docker) is next.**
+**Phase 0 and steps 02-26 are done. Step 26 packages the FastAPI service as a
+locked, non-root Python 3.12 image and composes it with healthy Qdrant and Redis
+dependencies. Corpus, embedding cache, configured traces and vector data survive
+container replacement in named volumes. The real three-service stack is healthy, both
+operational endpoints return 200, and all 643 non-paid tests pass with the live
+integrations. Step 27 (Tests) is next.**
 
 Shipped and verified:
 
@@ -47,6 +48,7 @@ Shipped and verified:
 | Per-query observability | `app/observability/trace.py`, `scripts/trace_report.py`, `data/eval/observability.jsonl` — one versioned trace at the answer/cache orchestration seam; 1,000/1,000 representative JSONL records validate, p50 0.45 ms, p95 0.84 ms. Prompt and response content require explicit opt-in. |
 | Metadata filtering | `app/ingestion/loader.py`, `app/retrieval/search.py` — `doc_type` derived from the corpus layout, indexed, filterable through a generic `filters=` mapping; per-facet recall and an oracle run recording the ceiling on facet routing at **+0.000 Recall@5** |
 | FastAPI service | `app/api/{main,models}.py`, `app/ingestion/index.py`, `app/observability/metrics.py` — `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`; existing pipeline, cache and traces reused, 10 endpoint/index tests plus Qdrant replacement coverage, no new dependency. |
+| Docker application | `docker/Dockerfile`, `.dockerignore`, `compose.yaml` — locked Python 3.12 image, UID/GID 10001, API + Qdrant + Redis health ordering, loopback ports and persistent runtime data. Verified from empty volumes: 156 files fetched, 1,526 chunks indexed, real query then exact hit, document replacement 28 → 2 chunks, and all data retained across forced container recreation; `/health` and `/metrics` return 200. |
 
 The loop is closed, verified, measured and served: a question goes in through `POST /query`, and the existing pipeline returns a grounded answer with resolved citations. The CLI remains available through `scripts/ask.py`.
 
@@ -93,7 +95,8 @@ Four things later steps own:
 | 23 | Phase 13 - Cache | `v1.2` | Done: 30/30 stored answers identical, hit p50 19.8 ms versus matched cold 2,622 ms; 8 refusals; generation cost down 83.1%. Rule E passes. Rule S fails, semantic remains off. |
 | 24 | Phase 15 — Observability | — | **Done:** one privacy-controlled JSONL trace per query; ranked scores, optional prompt/response, tokens, configured cost, stage latency, cache/refusal/failure. Rule O passes at 0.84 ms p95 for 1,000/1,000 valid records. |
 | 25 | Phase 14 — FastAPI | — | **Done:** `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`; OpenAPI validation, sanitized service failures, document replacement and cache invalidation. |
-| 26-28 | Phase 16-17 — Docker, tests, CI | `v1.0` | `docker compose up` and a green pipeline with RAG regression gates. |
+| 26 | Phase 16 — Docker | — | **Done:** `docker compose up --build -d --wait` produces a healthy API + Qdrant + Redis stack; the runtime is non-root and can fetch/index the corpus into persistent volumes. |
+| 27-28 | Phase 17 — Tests and CI | — | A green pipeline with RAG regression gates. |
 | 29-30 | — | — | Benchmark dashboard and the README that tells the whole story. |
 
 **The tag column past step 20 is provisional.** It was written to track README phase
@@ -104,7 +107,7 @@ lands rather than promised here. Step 21 took **`v1.1`**.
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-25:
+Detailed, executable plans exist for steps 02-26:
 
 | Step | Plan |
 |---|---|
@@ -129,8 +132,9 @@ Detailed, executable plans exist for steps 02-25:
 | 23 Cache | [`2026-09-30-step-23-cache.md`](superpowers/plans/2026-09-30-step-23-cache.md), design: [`2026-09-30-cache-design.md`](superpowers/specs/2026-09-30-cache-design.md) |
 | 24 Observability | [`2026-10-23-step-24-observability.md`](superpowers/plans/2026-10-23-step-24-observability.md), design: [`2026-10-23-observability-design.md`](superpowers/specs/2026-10-23-observability-design.md) |
 | 25 FastAPI | [`2026-10-25-step-25-fastapi.md`](superpowers/plans/2026-10-25-step-25-fastapi.md) |
+| 26 Docker | [`2026-10-25-step-26-docker.md`](superpowers/plans/2026-10-25-step-26-docker.md) |
 
-**Steps 26-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements. Writing those plans now would mean inventing the answers — steps 12-23 each answered their own question only by running it, several answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with the recorded results in hand.
+**Steps 27-30 are deliberately unplanned.** Every one of them is a decision that rule 1 says must be made against measurements. Writing those plans now would mean inventing the answers — steps 12-23 each answered their own question only by running it, several answered 'no', and step 20 answered 'yes' only after two of its own pre-registered numbers turned out to be measuring the wrong thing. Each plan gets written at the start of its own step, with the recorded results in hand.
 
 ## How a step lands
 

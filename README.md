@@ -24,6 +24,7 @@
 - [Cache — étape 23](#cache--étape-23--exact-disponible-sémantique-rejeté)
 - [Observabilité — étape 24](#observabilité--étape-24--une-trace-vérifiable-par-requête)
 - [API FastAPI — étape 25](#api-fastapi--étape-25--le-pipeline-devient-un-service)
+- [Docker — étape 26](#docker--étape-26--lapplication-devient-reproductible)
 - [Premiers constats](#premiers-constats)
 - [Pipeline cible](#pipeline-cible)
 - [Stack technique](#stack-technique)
@@ -43,13 +44,14 @@ Le projet suit une règle simple : chaque amélioration du retrieval ou de la g�
 
 ## État actuel
 
-**Étape 25 terminée — le pipeline est exposé par FastAPI.** `POST /query`
-sert l'objet `Answer` existant à travers le cache, `POST /documents` remplace un
-document dans Qdrant puis invalide les réponses, `GET /health` vérifie les
-dépendances configurées et `GET /metrics` agrège les traces de l'étape 24 sans
-exposer leur contenu. Le contrat HTTP compte 8 tests sans réseau ; la suite
-complète reste la preuve de non-régression. Prochaine étape : **26,
-Dockerisation**. [Détails](#api-fastapi--étape-25--le-pipeline-devient-un-service).
+**Étape 26 terminée — l'application complète est conteneurisée.** Une image
+Python 3.12 verrouillée par `uv` exécute FastAPI sans privilèges ; Docker Compose
+relie l'API à Qdrant et Redis, attend leur santé et persiste l'index, le corpus,
+le cache d'embeddings et les traces configurées. `docker compose up --build -d --wait` rend les
+trois services sains ; `/health` et `/metrics` répondent `200`. La suite complète
+passe avec les intégrations actives : **643 tests réussis**, 5 tests payants
+explicitement exclus. Prochaine étape : **27, Tests**.
+[Détails](#docker--étape-26--lapplication-devient-reproductible).
 
 **Étape 20 terminée — Compression contextuelle, mesurée et promue.** La boucle est fermée, **vérifiable**, et maintenant **mesurée** : une question entre, une réponse fondée sur le corpus sort, chaque `[n]` qu'elle contient a été confronté au contexte réellement fourni, et les 45 questions annotées non réservées donnent une baseline chiffrée contre laquelle toutes les étapes suivantes sont comparées. Quatre stratégies de découpage ont été mesurées l'une contre l'autre : `sentence` gagne et devient le défaut, Recall@5 0,713 → **0,776** (`dense-sentence`). Le corpus est récupérable, chargeable en objets `RawDocument` validés, nettoyé, découpé en `Chunk` porteurs de leurs métadonnées, vectorisé avec cache persistant, indexé dans Qdrant, interrogeable, répondable, sourcé pour de bon, et **noté**. Chaque chunk porte désormais une facette `doc_type` dérivée de l'arborescence du corpus, indexée dans Qdrant et filtrable depuis `search()`, `answer_question()` et les trois scripts via `--filter`. La mesure qui compte est négative et elle est publiée telle quelle : un routeur de facette **parfait** rapporte **+0,000 de Recall@5**. Un index BM25 écrit à la main et une fusion RRF s'ajoutent derrière un registre `RETRIEVERS` : les trois modes sont mesurés sur le même jeu de 45 questions, et `dense` **reste le défaut** parce que la règle d'acceptation écrite avant les runs n'est pas atteinte (Recall@5 0,737 contre 0,776). Le résultat publié tel quel est celui-ci, et le gain réel est ailleurs : Recall@10 monte de 0,785 à **0,829**, et l'écart Recall@10 − Recall@5 passe de 0,009 à 0,092 — c'est ce que le reranker de l'étape 17 aura à réordonner. L'étape 17 a d'abord mesuré ce plafond au lieu de le supposer : le vivier dense à 30 monte à **0,884** de Recall@30 contre 0,785 au rang 5, soit 0,099 de marge réelle. Deux backends de reranking sont livrés derrière un registre `RERANKERS` — FlashRank en ONNX local et Cohere Rerank — et le verdict est de nouveau négatif, publié tel quel : la meilleure ligne rapporte **+0,002** de Recall@5 pour **1 141 ms** de latence, `code` régresse de 0,100, et `RERANK_MODEL` **reste vide**. Le cross-encoder déplace la précision de `code` vers `conceptual` sans rien ajouter au total. Les étapes 18-19 s'attaquent enfin à la **question** plutôt qu'à l'index : un registre `TRANSFORMS` (`rewrite` | `multi`) derrière `search(transform=)`, et une `contextualize()` qui vit délibérément **au-dessus** de `search()`, dans `answer_question()`, pour que le retrieval n'apprenne jamais ce qu'est une conversation. Le verdict est négatif pour la quatrième fois consécutive et publié tel quel : `rewrite` **perd 0,092 de Recall@5** (0,684 contre 0,776) et la meilleure ligne multi-query plafonne à **0,765**, soit −0,011 là où la règle pré-enregistrée demandait +0,030. **`QUERY_TRANSFORM` reste vide.** Le seul gain net de l'étape est ailleurs et il est franc : sur une fixture conversationnelle de dix questions bâtie pour ça, résoudre le suivi contre son historique fait passer le Recall@5 de **0,100 à 0,600**. L'étape 20 rompt enfin la série : `compress()` découpe chaque chunk retrouvé en phrases avec le `sentence_spans()` de l'indexeur, les note contre la question avec le cache d'embeddings déjà là, et n'en garde que ce qui tient dans le budget mesuré du contexte d'aujourd'hui — **3 688 caractères**, relevé et non estimé. Un vivier de 20 chunks compressé dans le prompt que 5 chunks entiers occupaient porte le **Recall@context de 0,721 à 0,814** pour un plafond de 0,836, sans qu'aucune catégorie ne régresse, et `multi_doc` — celle qui portait l'écart — passe de **0,552 à 0,792**. Le refus sur les 38 questions répondables tombe de **0,316 à 0,211**, les 7 questions sans réponse continuent d'abstenir 7 fois sur 7, et la règle pré-enregistrée est atteinte pour la première fois : **`COMPRESS_METHOD=embedding`, `COMPRESS_CANDIDATES=20`**. Deux corrections de méthode sont publiées avec : le contrôle du plan (0,785) venait d'une ligne `--top-k 30` et ne décrivait pas ce qui arrive au modèle — `recall@k` compte les k premiers **documents distincts**, pas les k premiers chunks — et le prompt compressé est **plus gros** de 11 %, parce que les en-têtes que `build_context()` ajoute après le budget ne sont pas dans le budget. Depuis l'étape 25, ce même pipeline est aussi servi par FastAPI ; `scripts/ask.py` reste son client local en ligne de commande.
 
@@ -1963,6 +1965,50 @@ La couche ajoute des tests ciblés des contrats HTTP, de l'orchestration
 d'indexation et du remplacement Qdrant. Elle n'ajoute aucune
 dépendance : FastAPI et Uvicorn étaient déjà verrouillés depuis le socle.
 
+## Docker — étape 26 : l'application devient reproductible
+
+Le fichier `docker/Dockerfile` construit l'environnement de production depuis
+`uv.lock`, sans dépendances de développement, puis lance Uvicorn avec
+l'utilisateur non privilégié `rag` (UID/GID 10001). `.dockerignore` limite le
+contexte de build au code, aux scripts de bootstrap et aux fichiers de verrou.
+
+```powershell
+Copy-Item .env.example .env
+# Renseigner au minimum RAG_API_KEY et la clé du fournisseur de modèles.
+docker compose up --build -d --wait
+```
+
+Sur un volume Qdrant neuf, récupérer puis indexer le corpus depuis la même image :
+
+```powershell
+docker compose run --rm rag-api python scripts/fetch_corpus.py
+docker compose run --rm rag-api python scripts/index_corpus.py --recreate
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+La première indexation appelle le fournisseur d'embeddings ; les suivantes
+réutilisent le cache SQLite du volume `rag_data`. Ce volume conserve aussi le
+corpus et, si `TRACE_PATH` est activé, les traces. `qdrant_storage` conserve l'index ; Redis reste un cache
+volatil, conformément à l'étape 23. Tous les ports sont liés à `127.0.0.1` par
+défaut. `RAG_API_PORT` permet de changer le port HTTP.
+
+Le healthcheck du conteneur mesure la vie du processus via OpenAPI. `GET /health`
+reste la readiness applicative : sur un volume neuf, il répond normalement `503`
+jusqu'à la première indexation. Une passerelle de modèles qui tourne sur l'hôte
+doit utiliser les variables `DOCKER_*_BASE_URL`, avec par exemple
+`http://host.docker.internal:20128/v1` plutôt que `localhost`.
+
+La validation finale est partie de volumes neufs, sur des ports alternatifs :
+156 fichiers Markdown ont été récupérés, 148 conservés après nettoyage et
+1 526 chunks indexés. Une vraie requête HTTP a produit une réponse sourcée, puis
+sa répétition a été servie par le cache exact. `POST /documents` a remplacé un
+document de 28 chunks par 2 chunks et supprimé les 26 points devenus obsolètes.
+Après recréation forcée des trois conteneurs, les 156 fichiers, le cache
+d'embeddings de 13,4 MB et les 1 528 points étaient toujours présents ; les
+trois services et `GET /health` étaient sains. L'image finale tourne avec l'UID
+10001, ne contient ni `.env` ni les outils de développement. La suite locale
+termine à **643 réussites**, les 5 tests payants restant explicitement exclus.
+
 ## Premiers constats
 
 Cinq requêtes sur les 1 607 points réels. Ce sont les premières mesures de retrieval du projet, relevées avant que quoi que ce soit ne soit construit dessus.
@@ -2029,9 +2075,8 @@ Ce diagramme représente la cible du projet, pas son état actuel.
 
 ### Prérequis
 
-- [uv](https://docs.astral.sh/uv/) ;
-- Python 3.12, installable automatiquement par uv ;
 - Docker avec le plugin Docker Compose.
+- [uv](https://docs.astral.sh/uv/) et Python 3.12 uniquement pour le développement local.
 
 ### Installation
 
@@ -2039,11 +2084,15 @@ Ce diagramme représente la cible du projet, pas son état actuel.
 git clone git@github.com:Slqzeer/Advanced-RAG-Knowledge-Assistant.git
 cd Advanced-RAG-Knowledge-Assistant
 Copy-Item .env.example .env
-uv sync --frozen
-docker compose up -d qdrant --wait
+docker compose up --build -d --wait
+docker compose run --rm rag-api python scripts/fetch_corpus.py
+docker compose run --rm rag-api python scripts/index_corpus.py --recreate
 ```
 
-Renseignez ensuite `OPENAI_API_KEY` dans `.env` : les embeddings en ont besoin. Depuis l'étape 06, `app.core.config` charge `.env` automatiquement ; `uv run --env-file .env` n'est plus nécessaire.
+Renseignez `RAG_API_KEY` et la clé du fournisseur de modèles dans `.env` avant
+d'appeler les routes protégées ou d'indexer. Depuis l'étape 06,
+`app.core.config` charge `.env` automatiquement ; `uv run --env-file .env` n'est
+plus nécessaire.
 
 Qdrant est alors accessible sur :
 
@@ -2164,8 +2213,8 @@ uv run pytest -m requires_qdrant
 # Test du vrai modèle ONNX (télécharge les poids au premier passage)
 uv run pytest -m requires_model
 
-# Gérer Qdrant
-docker compose up -d qdrant --wait
+# Gérer l'application complète
+docker compose up --build -d --wait
 docker compose ps
 docker compose down
 ```
@@ -2187,7 +2236,7 @@ docker compose down
 │   ├── eval/         # jeu de questions annoté et historique des runs, versionnés
 │   ├── raw/          # sources locales non versionnées
 │   └── processed/    # données transformées non versionnées
-├── docker/           # futurs fichiers de conteneurisation
+├── docker/           # image de production de l'API
 ├── docs/             # spécifications et plans
 ├── notebooks/        # futures expérimentations
 ├── scripts/          # outils ponctuels (corpus, indexation, recherche, questions)
@@ -2214,7 +2263,7 @@ docker compose down
 - [x] **Phase 13 — Cache** : cache exact mesuré (30/30 réponses identiques, p50 19,8 ms) ; sémantique rejeté (0/38 paraphrases).
 - [x] **Phase 14 — API professionnelle** : quatre opérations FastAPI livrées et testées (`/query`, `/documents`, `/health`, `/metrics`).
 - [x] **Phase 15 — Observabilité** : une trace JSONL versionnée par requête ; scores, prompt optionnel, tokens, coût configuré et latences par étape, règle O satisfaite à 0,84 ms p95.
-- [ ] **Phase 16 — Dockerisation** : conteneuriser l'application complète.
+- [x] **Phase 16 — Dockerisation** : image non-root et application Compose API + Qdrant + Redis, construites et vérifiées en conditions réelles.
 - [ ] **Phase 17 — Tests et CI/CD** : automatiser les régressions et les builds.
 
 ## Résultats
@@ -2287,4 +2336,4 @@ Chaque future phase doit mettre à jour dans le même changement :
 - [Plan global](docs/roadmap.md) — état actuel, correspondance étapes/phases/versions et index des plans par étape
 - [Spécification du socle](docs/superpowers/specs/2026-09-09-project-foundation-design.md)
 - [Plan d'implémentation du socle](docs/superpowers/plans/2026-09-09-project-foundation.md)
-- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 25 rédigées ; les suivantes sont écrites au début de leur étape
+- [Plans par étape](docs/superpowers/plans/) — étapes 02 à 26 rédigées ; les suivantes sont écrites au début de leur étape
