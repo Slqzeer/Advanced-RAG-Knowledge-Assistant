@@ -162,3 +162,8 @@ def default_index(settings: Settings, collection: str) -> BM25Index:
     save ~200 ms on a CLI call that already spends 1.5-3.7 s in generation.
     """
     return _index_for(settings.qdrant_url, collection)
+
+
+def invalidate_index() -> None:
+    """Make the next lexical/hybrid query rebuild from Qdrant."""
+    _index_for.cache_clear()

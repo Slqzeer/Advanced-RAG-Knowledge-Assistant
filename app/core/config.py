@@ -130,6 +130,9 @@ class Settings(BaseSettings):
     # Step 23. Empty means no cache and no connection attempt: tests and every
     # command that predates the cache behave exactly as before it existed.
     redis_url: str = ""
+    # Step 25. Required by both mutating/expensive API routes. Keeping it
+    # separate from provider credentials makes rotation and scoping explicit.
+    rag_api_key: str | None = None
     # A backstop, not the invalidation: scripts/index_corpus.py clears the cache
     # on re-index, and refusals are never stored.
     cache_ttl_s: int = 604800

@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Iterator
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 from qdrant_client import QdrantClient
@@ -14,6 +15,7 @@ from app.retrieval.store import (
     ensure_collection,
     get_client,
     point_id,
+    replace_document_chunks,
     upsert_chunks,
 )
 
@@ -79,6 +81,31 @@ def test_a_vector_count_mismatch_raises() -> None:
         upsert_chunks(None, "x", CHUNKS, VECTORS[:2])  # type: ignore[arg-type]
 
 
+def test_replacement_requires_one_document() -> None:
+    other = make_chunk(3).model_copy(update={"document_id": "fastapi:other"})
+    with pytest.raises(ValueError, match="exactly one document"):
+        replace_document_chunks(
+            None,
+            "x",
+            [CHUNKS[0], other],
+            VECTORS[:2],  # type: ignore[arg-type]
+        )
+
+
+def test_replacement_keeps_old_points_when_the_upsert_fails() -> None:
+    client = Mock(spec=QdrantClient)
+    client.scroll.return_value = ([SimpleNamespace(id="old-point")], None)
+
+    with (
+        patch("app.retrieval.store.ensure_collection"),
+        patch("app.retrieval.store.upsert_chunks", side_effect=RuntimeError("failed")),
+        pytest.raises(RuntimeError, match="failed"),
+    ):
+        replace_document_chunks(client, "chunks", CHUNKS[:1], VECTORS[:1])
+
+    client.delete.assert_not_called()
+
+
 # --- against a real Qdrant -------------------------------------------------
 
 requires_qdrant = pytest.mark.requires_qdrant
@@ -134,6 +161,16 @@ def test_upserting_the_same_chunks_twice_stores_three_points(
     upsert_chunks(client, collection, CHUNKS, VECTORS)
     upsert_chunks(client, collection, CHUNKS, VECTORS)
     assert collection_stats(client, collection)["points"] == 3
+
+
+@requires_qdrant
+def test_replacing_a_document_removes_its_stale_tail_chunks(
+    client: QdrantClient, collection: str
+) -> None:
+    replace_document_chunks(client, collection, CHUNKS, VECTORS)
+    replace_document_chunks(client, collection, CHUNKS[:1], VECTORS[:1])
+
+    assert collection_stats(client, collection)["points"] == 1
 
 
 @requires_qdrant

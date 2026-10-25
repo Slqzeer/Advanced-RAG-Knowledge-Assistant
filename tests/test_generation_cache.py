@@ -12,8 +12,10 @@ from redis.exceptions import RedisError
 from app.core.config import Settings
 from app.generation.cache import (
     ANSWER_PREFIX,
+    CORPUS_REVISION,
     QVEC,
     _pairs,
+    bump_corpus_revision,
     cache_key,
     cached_answer,
     clear_cache,
@@ -30,6 +32,7 @@ UNKEYED = {
     "qdrant_url",
     "qdrant_api_key",
     "redis_url",
+    "rag_api_key",
     "cache_ttl_s",
     "cache_semantic_threshold",
     "corpus_dir",
@@ -115,6 +118,16 @@ def test_the_fingerprint_ignores_the_question() -> None:
     assert cache_key("a", None, settings, {}) != cache_key("b", None, settings, {})
 
 
+def test_the_corpus_revision_changes_keys_and_semantic_fingerprints() -> None:
+    settings = Settings(_env_file=None)
+    assert cache_key("q", None, settings, {}, corpus_revision=1) != cache_key(
+        "q", None, settings, {}, corpus_revision=2
+    )
+    assert fingerprint(settings, {}, corpus_revision=1) != fingerprint(
+        settings, {}, corpus_revision=2
+    )
+
+
 def _answer(text: str, refusal: str | None = None) -> Answer:
     return Answer(
         answer=text,
@@ -183,7 +196,9 @@ def test_an_exact_follow_up_hit_is_counted_as_a_repeat(tmp_path) -> None:
 
     path = tmp_path / "traces.jsonl"
     client = Mock(spec=Redis)
-    client.get.return_value = _answer("stored").model_dump_json().encode()
+    client.get.side_effect = lambda key: (
+        b"0" if key == CORPUS_REVISION else _answer("stored").model_dump_json().encode()
+    )
     history = [{"role": "user", "content": "earlier"}]
 
     answer = cached_answer(
@@ -353,6 +368,24 @@ def test_clear_cache_removes_the_prefix_and_nothing_else(client: Redis) -> None:
     assert clear_cache(connect(_settings())) == 3  # two answers and the vector set
     assert client.get("someone-else") == b"1"
     assert not client.exists(QVEC)
+
+
+@requires_redis
+def test_revision_makes_an_in_flight_old_answer_unreachable(client: Redis) -> None:
+    calls: list[str] = []
+
+    def answerer(question: str, **_: Any) -> Answer:
+        calls.append(question)
+        if len(calls) == 1:
+            assert bump_corpus_revision(client) == 1
+        return _answer(f"answer {len(calls)}")
+
+    first = cached_answer("q", settings=_settings(), client=client, answerer=answerer)
+    second = cached_answer("q", settings=_settings(), client=client, answerer=answerer)
+
+    assert first.answer == "answer 1"
+    assert second.answer == "answer 2"
+    assert calls == ["q", "q"]
 
 
 @pytest.mark.parametrize("threshold", [None, 0.9])
