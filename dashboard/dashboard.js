@@ -1,118 +1,394 @@
 (() => {
   "use strict";
 
-  const data = window.BENCHMARK_DATA;
-  if (!data) {
-    document.body.innerHTML = '<p class="empty">Dashboard data is missing. Run <code>uv run python scripts/build_dashboard.py</code>.</p>';
-    return;
+  const $ = (selector) => document.querySelector(selector);
+  const number = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
+  const integer = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+  const history = [];
+  const conversationsKey = "rag-conversations";
+  let conversations = [];
+  let activeConversationId = "";
+  let busy = false;
+
+  const stored = (key) => {
+    try { return sessionStorage.getItem(key) || ""; } catch { return ""; }
+  };
+  const remember = (key, value) => {
+    try { value ? sessionStorage.setItem(key, value) : sessionStorage.removeItem(key); } catch { /* session storage is optional */ }
+  };
+  const apiBase = () => (stored("rag-api-url") || window.location.origin).replace(/\/$/, "");
+  const apiUrl = (path) => `${apiBase()}${path}`;
+  const percent = (value) => `${number.format(value * 100)}%`;
+  const latency = (value) => value == null ? "--" : `${integer.format(value)} ms`;
+
+  function readConversations() {
+    try {
+      const value = JSON.parse(localStorage.getItem(conversationsKey) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch { return []; }
   }
 
-  const $ = (selector) => document.querySelector(selector);
-  const number = (value, digits = 3) => value == null ? "—" : Number(value).toFixed(digits);
-  const percent = (value) => value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
-  const latency = (value) => value == null ? "—" : `${Number(value).toFixed(value < 10 ? 2 : 0)} ms`;
-  const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
+  function writeConversations() {
+    try { localStorage.setItem(conversationsKey, JSON.stringify(conversations.slice(0, 24))); } catch { /* local storage is optional */ }
+  }
 
-  const count = Object.values(data.counts).reduce((total, value) => total + value, 0);
-  $("#snapshot-count").textContent = `${count} recorded runs · ${data.retrieval.length} retrieval labels`;
-  $("#snapshot-date").textContent = data.generated_at ? `latest evidence ${new Date(data.generated_at).toLocaleDateString()}` : "no dated evidence";
+  function setText(selector, value) {
+    const element = $(selector);
+    if (element) element.textContent = value;
+  }
 
-  const shippedRetrieval = data.retrieval.find((run) => run.label === "compress-embedding-d20") || data.retrieval.at(-1) || {};
-  const shippedAnswer = data.answers.find((run) => run.label === "ragas-d20-a0") || data.answers.at(-1) || {};
-  const exact = data.cache.find((run) => run.label === "cache-exact") || {};
-  const metrics = [
-    ["Recall@5", number(shippedRetrieval.aggregate?.["recall@5"]), shippedRetrieval.label || "not measured"],
-    ["Recall@10", number(shippedRetrieval.aggregate?.["recall@10"]), "retrieval, document-level"],
-    ["Answer relevancy", number(shippedAnswer.ragas?.relevancy), shippedAnswer.ragas ? "RAGAS judge" : "not measured"],
-    ["Exact cache p50", latency(exact.hit_p50_ms), exact.rule_e ? "Rule E passed" : "not measured"],
-  ];
-  $("#headline-metrics").innerHTML = metrics.map(([label, value, note]) => `<article class="metric"><span class="label">${escape(label)}</span><strong class="value">${escape(value)}</strong><span class="note">${escape(note)}</span></article>`).join("");
+  function message(role, text, options = {}) {
+    const article = document.createElement("article");
+    article.className = `message ${role}-message${options.error ? " error-message" : ""}${options.thinking ? " thinking" : ""}`;
 
-  const modes = [...new Set(data.retrieval.map((run) => run.config?.mode || "dense"))].sort();
-  $("#mode-filter").insertAdjacentHTML("beforeend", modes.map((mode) => `<option value="${escape(mode)}">${escape(mode)}</option>`).join(""));
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = role === "user" ? "Y" : "R";
 
-  let selectedLabel = shippedRetrieval.label;
-  const filteredRuns = () => {
-    const query = $("#run-search").value.trim().toLowerCase();
-    const mode = $("#mode-filter").value;
-    return data.retrieval.filter((run) => {
-      const runMode = run.config?.mode || "dense";
-      return (!query || run.label.toLowerCase().includes(query)) && (mode === "all" || runMode === mode);
-    });
-  };
+    const content = document.createElement("div");
+    content.className = "message-content";
+    const author = document.createElement("span");
+    author.className = "message-author";
+    author.textContent = role === "user" ? "You" : "Assistant";
+    const body = document.createElement("p");
+    body.textContent = text;
+    content.append(author, body);
 
-  function renderPlot(runs, metric) {
-    const svg = $("#retrieval-plot");
-    const points = runs.filter((run) => Number.isFinite(run.aggregate?.[metric]) && Number.isFinite(run.latency_p50_ms));
-    $("#plot-title").textContent = `${metric.replace("@", " @ ")} vs p50 latency`;
-    $("#plot-count").textContent = `${points.length} plotted`;
-    if (!points.length) {
-      svg.innerHTML = '<text x="480" y="220" text-anchor="middle" class="axis-label">No matching measured runs</text>';
+    if (options.answer) {
+      const meta = document.createElement("div");
+      meta.className = "answer-meta";
+      const items = [
+        latency(options.answer.latency_ms),
+        options.answer.model || "model unknown",
+        options.answer.cache ? `${options.answer.cache} cache` : "generated",
+        `${options.answer.retrieval?.used ?? 0} chunks used`,
+      ];
+      items.forEach((item) => {
+        const chip = document.createElement("span");
+        chip.textContent = item;
+        meta.append(chip);
+      });
+      content.append(meta);
+
+      if (options.answer.sources?.length) {
+        const sources = document.createElement("div");
+        sources.className = "sources";
+        options.answer.sources.forEach((source) => {
+          const label = `[${source.index}] ${source.title || source.document_id}${source.section ? ` / ${source.section}` : ""}`;
+          if (source.url) {
+            const link = document.createElement("a");
+            link.href = source.url;
+            link.target = "_blank";
+            link.rel = "noreferrer";
+            link.textContent = label;
+            sources.append(link);
+          } else {
+            const item = document.createElement("span");
+            item.textContent = label;
+            sources.append(item);
+          }
+        });
+        content.append(sources);
+      }
+    }
+
+    article.append(avatar, content);
+    $("#messages").append(article);
+    $("#messages").scrollTop = $("#messages").scrollHeight;
+    return article;
+  }
+
+  function renderConversationList() {
+    const list = $("#conversation-list");
+    list.innerHTML = "";
+    if (!conversations.length) {
+      const empty = document.createElement("p");
+      empty.className = "history-empty";
+      empty.textContent = "Your conversations will appear here.";
+      list.append(empty);
       return;
     }
-    const left = 78, right = 925, top = 35, bottom = 385;
-    const maxX = Math.max(...points.map((run) => run.latency_p50_ms), 1);
-    const minY = Math.min(...points.map((run) => run.aggregate[metric]));
-    const maxY = Math.max(...points.map((run) => run.aggregate[metric]));
-    const yFloor = Math.max(0, Math.floor((minY - .04) * 10) / 10);
-    const yCeil = Math.min(1, Math.ceil((maxY + .04) * 10) / 10);
-    const x = (value) => left + (Math.log10(value + 1) / Math.log10(maxX + 1)) * (right - left);
-    const y = (value) => bottom - ((value - yFloor) / Math.max(yCeil - yFloor, .1)) * (bottom - top);
-    const grid = [0, .25, .5, .75, 1].map((part) => {
-      const gy = top + part * (bottom - top);
-      const value = yCeil - part * (yCeil - yFloor);
-      return `<line x1="${left}" y1="${gy}" x2="${right}" y2="${gy}" class="grid-line"/><text x="${left - 12}" y="${gy + 4}" text-anchor="end" class="axis-label">${value.toFixed(2)}</text>`;
-    }).join("");
-    const circles = points.map((run) => `<g><circle tabindex="0" role="button" aria-label="${escape(run.label)}, ${metric} ${number(run.aggregate[metric])}, ${latency(run.latency_p50_ms)}" data-label="${escape(run.label)}" cx="${x(run.latency_p50_ms)}" cy="${y(run.aggregate[metric])}" r="${run.label === selectedLabel ? 9 : 6}" class="point"><title>${escape(run.label)} · ${number(run.aggregate[metric])} · ${latency(run.latency_p50_ms)}</title></circle></g>`).join("");
-    svg.innerHTML = `${grid}<line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" class="axis"/><line x1="${left}" y1="${top}" x2="${left}" y2="${bottom}" class="axis"/><text x="${(left + right) / 2}" y="425" text-anchor="middle" class="axis-label">p50 latency (log scale)</text>${circles}`;
-    svg.querySelectorAll(".point").forEach((point) => {
-      const select = () => selectRun(point.dataset.label);
-      point.addEventListener("click", select);
-      point.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") select(); });
+    conversations.forEach((conversation) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `conversation-item${conversation.id === activeConversationId ? " active" : ""}`;
+      button.dataset.conversationId = conversation.id;
+      const title = document.createElement("strong");
+      title.textContent = conversation.title || "New conversation";
+      const date = document.createElement("small");
+      date.textContent = new Date(conversation.updatedAt).toLocaleDateString([], { month: "short", day: "numeric" });
+      button.append(title, date);
+      list.append(button);
     });
   }
 
-  function renderRows(runs) {
-    const body = $("#retrieval-rows");
-    body.innerHTML = runs.map((run) => `<tr tabindex="0" data-label="${escape(run.label)}" class="${run.label === selectedLabel ? "selected" : ""}"><td>${escape(run.label)}</td><td>${escape(run.config?.mode || "dense")}</td><td>${number(run.aggregate?.["recall@5"])}</td><td>${number(run.aggregate?.["recall@10"])}</td><td>${number(run.aggregate?.mrr)}</td><td>${latency(run.latency_p50_ms)}</td><td><code>${escape(run.git_commit || "—")}</code></td></tr>`).join("") || '<tr><td colspan="7" class="empty">No matching runs</td></tr>';
-    body.querySelectorAll("tr[data-label]").forEach((row) => {
-      const select = () => selectRun(row.dataset.label);
-      row.addEventListener("click", select);
-      row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") select(); });
+  function saveActiveConversation() {
+    const firstQuestion = history.find((item) => item.role === "user")?.content || "New conversation";
+    const conversation = {
+      id: activeConversationId,
+      title: firstQuestion.length > 42 ? `${firstQuestion.slice(0, 42)}…` : firstQuestion,
+      updatedAt: new Date().toISOString(),
+      messages: [...history],
+    };
+    conversations = [conversation, ...conversations.filter((item) => item.id !== activeConversationId)];
+    writeConversations();
+    renderConversationList();
+  }
+
+  function openConversation(id) {
+    const conversation = conversations.find((item) => item.id === id);
+    if (!conversation) return;
+    activeConversationId = conversation.id;
+    history.splice(0, history.length, ...(conversation.messages || []));
+    $("#messages").innerHTML = "";
+    history.forEach((item) => message(item.role, item.content));
+    $("#suggestions").hidden = history.length > 0;
+    renderConversationList();
+    showWorkspace("chat");
+  }
+
+  function startConversation() {
+    activeConversationId = globalThis.crypto?.randomUUID?.() || `${Date.now()}`;
+    history.length = 0;
+    $("#messages").innerHTML = "";
+    message("assistant", "New conversation started. What would you like to explore?");
+    $("#suggestions").hidden = false;
+    renderConversationList();
+    showWorkspace("chat");
+    $("#question").focus();
+  }
+
+  async function responseError(response) {
+    try {
+      const payload = await response.json();
+      if (Array.isArray(payload.detail)) return payload.detail.map((item) => item.msg).join("; ");
+      return payload.detail || `Request failed (${response.status})`;
+    } catch {
+      return `Request failed (${response.status})`;
+    }
+  }
+
+  async function ask(question) {
+    const key = stored("rag-api-key");
+    if (!key) {
+      openSettings();
+      setTimeout(() => $("#api-key").focus(), 50);
+      return;
+    }
+
+    busy = true;
+    $(".send-button").disabled = true;
+    $("#suggestions").hidden = true;
+    message("user", question);
+    const pending = message("assistant", "Searching the knowledge base", { thinking: true });
+
+    try {
+      const response = await fetch(apiUrl("/query"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": key },
+        body: JSON.stringify({ question, history }),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      const answer = await response.json();
+      pending.remove();
+      message("assistant", answer.answer, { answer });
+      history.push({ role: "user", content: question }, { role: "assistant", content: answer.answer });
+      saveActiveConversation();
+      refreshDashboard();
+    } catch (error) {
+      pending.remove();
+      const hint = error instanceof TypeError ? "Could not reach the API. Check the backend URL and its CORS policy." : error.message;
+      message("assistant", hint, { error: true });
+    } finally {
+      busy = false;
+      $(".send-button").disabled = false;
+      $("#question").focus();
+    }
+  }
+
+  function renderHealth(health, reachable) {
+    const state = $("#service-state");
+    state.classList.toggle("online", Boolean(reachable && health?.status === "ok"));
+    state.classList.toggle("offline", !reachable || health?.status !== "ok");
+    state.querySelector("strong").textContent = reachable && health?.status === "ok" ? "Service online" : "Service unavailable";
+    state.querySelector("small").textContent = reachable ? "Live API status" : "Check connection settings";
+    setText("#qdrant-state", health?.qdrant ? "Ready" : "Unavailable");
+    setText("#redis-state", health?.redis === null ? "Disabled" : health?.redis ? "Ready" : "Unavailable");
+  }
+
+  function renderMetrics(metrics) {
+    const total = metrics.total || 0;
+    const generated = metrics.generated || 0;
+    const refused = metrics.refused || 0;
+    const failed = metrics.failed || 0;
+    const cacheHits = (metrics.exact_hits || 0) + (metrics.semantic_hits || 0);
+    const successRate = total ? generated / total : 0;
+    const cacheRate = total ? cacheHits / total : 0;
+    const share = (value) => total ? `${value / total * 100}%` : "0%";
+
+    setText("#metric-total", integer.format(total));
+    setText("#metric-generated", `${integer.format(generated)} generated answers`);
+    setText("#metric-success", total ? percent(successRate) : "--");
+    setText("#metric-refused", `${integer.format(refused)} refused / ${integer.format(failed)} failed`);
+    setText("#metric-latency", latency(metrics.latency_p50_ms));
+    setText("#metric-p95", `p95 ${latency(metrics.latency_p95_ms)}`);
+    setText("#side-latency", latency(metrics.latency_p50_ms));
+    setText("#metric-cache", total ? percent(cacheRate) : "--");
+    setText("#metric-cache-count", `${integer.format(cacheHits)} cache hits`);
+    setText("#outcome-total", `${integer.format(total)} requests`);
+    setText("#generated-count", integer.format(generated));
+    setText("#refused-count", integer.format(refused));
+    setText("#failed-count", integer.format(failed));
+    $("#generated-bar").style.width = share(generated);
+    $("#refused-bar").style.width = share(refused);
+    $("#failed-bar").style.width = share(failed);
+    setText("#prompt-tokens", integer.format(metrics.prompt_tokens || 0));
+    setText("#completion-tokens", integer.format(metrics.completion_tokens || 0));
+    setText("#known-cost", `$${number.format(metrics.known_cost_usd || 0)}`);
+    setText("#follow-ups", integer.format(metrics.follow_ups || 0));
+  }
+
+  async function refreshDashboard() {
+    $("#refresh-dashboard").disabled = true;
+    try {
+      const [healthResponse, metricsResponse] = await Promise.all([
+        fetch(apiUrl("/health")),
+        fetch(apiUrl("/metrics")),
+      ]);
+      const health = await healthResponse.json();
+      renderHealth(health, true);
+      if (!metricsResponse.ok) throw new Error(await responseError(metricsResponse));
+      renderMetrics(await metricsResponse.json());
+      setText("#last-updated", `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    } catch {
+      renderHealth(null, false);
+      setText("#last-updated", "Connection unavailable");
+    } finally {
+      $("#refresh-dashboard").disabled = false;
+    }
+  }
+
+  function renderBenchmarks() {
+    const data = window.BENCHMARK_DATA;
+    if (!data) {
+      $("#benchmark-cards").textContent = "Benchmark snapshot unavailable.";
+      return;
+    }
+    const retrieval = data.retrieval.find((run) => run.label === "compress-embedding-d20") || data.retrieval.at(-1) || {};
+    const answers = data.answers.find((run) => run.label === "ragas-d20-a0") || data.answers.at(-1) || {};
+    const cache = data.cache.find((run) => run.label === "cache-exact") || {};
+    const cards = [
+      ["Promoted retrieval", retrieval.aggregate?.["recall@5"]?.toFixed(3) || "--", "Recall@5", "featured"],
+      ["Answer quality", answers.ragas?.relevancy?.toFixed(3) || "--", "RAGAS relevancy", ""],
+      ["Exact cache", cache.hit_p50_ms == null ? "--" : latency(cache.hit_p50_ms), cache.rule_e ? "Acceptance rule passed" : "Not measured", ""],
+    ];
+    cards.forEach(([label, value, note, className]) => {
+      const card = document.createElement("article");
+      card.className = `benchmark-card ${className}`.trim();
+      const eyebrow = document.createElement("span");
+      eyebrow.className = "eyebrow";
+      eyebrow.textContent = label;
+      const score = document.createElement("strong");
+      score.className = "number";
+      score.textContent = value;
+      const copy = document.createElement("p");
+      copy.textContent = note;
+      card.append(eyebrow, score, copy);
+      $("#benchmark-cards").append(card);
     });
+
+    const rows = [...data.retrieval].slice(-8).reverse();
+    rows.forEach((run) => {
+      const row = document.createElement("tr");
+      const values = [
+        run.label,
+        run.config?.mode || "dense",
+        run.aggregate?.["recall@5"]?.toFixed(3) || "--",
+        run.aggregate?.["recall@10"]?.toFixed(3) || "--",
+        run.aggregate?.mrr?.toFixed(3) || "--",
+        latency(run.latency_p50_ms),
+      ];
+      values.forEach((value) => {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.append(cell);
+      });
+      $("#benchmark-rows").append(row);
+    });
+    if (data.generated_at) setText("#snapshot-date", `Snapshot ${new Date(data.generated_at).toLocaleDateString()}`);
   }
 
-  function renderCategory(run) {
-    if (!run) { $("#category-detail").innerHTML = '<p class="empty">Select a measured run.</p>'; return; }
-    const categories = Object.entries(run.per_category || {});
-    const metric = $("#metric-filter").value;
-    $("#category-detail").innerHTML = `<h3>${escape(run.label)} / category ${escape(metric)}</h3><div class="category-bars">${categories.map(([name, values]) => `<div class="category-bar"><strong>${escape(name)}</strong><span class="track"><span class="fill" style="width:${Math.max(0, Math.min(100, Number(values[metric] || 0) * 100))}%"></span></span><small>${number(values[metric])} · ${Number(values.questions || 0).toFixed(0)} questions</small></div>`).join("")}</div>`;
+  function openSettings() {
+    $("#api-url").value = stored("rag-api-url");
+    $("#api-key").value = stored("rag-api-key");
+    showWorkspace("configuration");
   }
 
-  function selectRun(label) {
-    selectedLabel = label;
-    renderRetrieval();
+  $("#chat-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = $("#question");
+    const question = input.value.trim();
+    if (!question || busy) return;
+    input.value = "";
+    input.style.height = "auto";
+    ask(question);
+  });
+  $("#question").addEventListener("input", (event) => {
+    event.target.style.height = "auto";
+    event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`;
+  });
+  $("#question").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      $("#chat-form").requestSubmit();
+    }
+  });
+  $("#suggestions").addEventListener("click", (event) => {
+    if (event.target.matches("button")) ask(event.target.textContent);
+  });
+  document.querySelectorAll(".new-conversation").forEach((button) => button.addEventListener("click", startConversation));
+  $("#conversation-list").addEventListener("click", (event) => {
+    const item = event.target.closest(".conversation-item");
+    if (item) openConversation(item.dataset.conversationId);
+  });
+  $("#refresh-dashboard").addEventListener("click", refreshDashboard);
+  $("#settings-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    remember("rag-api-url", $("#api-url").value.trim().replace(/\/$/, ""));
+    remember("rag-api-key", $("#api-key").value.trim());
+    refreshDashboard();
+    showWorkspace("chat");
+  });
+  function showWorkspace(id) {
+    const workspace = document.getElementById(id) || $("#chat");
+    document.querySelectorAll(".workspace").forEach((item) => {
+      const selected = item === workspace || item.dataset.parent === workspace.id;
+      item.hidden = !selected;
+      item.classList.toggle("active", selected);
+    });
+    document.querySelectorAll(".nav-link").forEach((item) => {
+      const selected = item.dataset.view === workspace.id;
+      item.classList.toggle("active", selected);
+      if (selected) item.setAttribute("aria-current", "page");
+      else item.removeAttribute("aria-current");
+    });
+    setText("#view-title", workspace.dataset.title);
+    setText("#view-kicker", workspace.dataset.kicker);
   }
 
-  function renderRetrieval() {
-    const runs = filteredRuns();
-    const metric = $("#metric-filter").value;
-    renderPlot(runs, metric);
-    renderRows(runs);
-    renderCategory(data.retrieval.find((run) => run.label === selectedLabel));
-  }
-  ["#run-search", "#mode-filter", "#metric-filter"].forEach((selector) => $(selector).addEventListener("input", renderRetrieval));
-  renderRetrieval();
+  document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", (event) => {
+    event.preventDefault();
+    showWorkspace(link.dataset.view);
+    window.history.replaceState(null, "", link.hash);
+  }));
+  window.addEventListener("hashchange", () => showWorkspace(location.hash.slice(1)));
 
-  $("#answer-rows").innerHTML = data.answers.map((run) => `<tr><td>${escape(run.label)}</td><td>${number(run.ragas?.faithfulness)}</td><td>${number(run.ragas?.relevancy)}</td><td>${percent(run.refusal_rate)}</td><td>${run.prompt_tokens_p50 == null ? "—" : Number(run.prompt_tokens_p50).toFixed(0)}</td><td>${latency(run.latency_p50_ms)}</td></tr>`).join("") || '<tr><td colspan="6" class="empty">No answer runs</td></tr>';
-
-  const cold = data.cache.find((run) => run.label === "cache-cold") || {};
-  const trace = data.observability.at(-1) || {};
-  const saving = cold.usd_at_list_price && exact.usd_at_list_price ? 1 - exact.usd_at_list_price / cold.usd_at_list_price : null;
-  const systemCards = [
-    ["Exact cache", exact.rule_e ? "PASS" : "—", `${exact.hits ?? 0} identical hits; ${latency(exact.hit_p50_ms)} p50.`, "accent"],
-    ["Generation cost", saving == null ? "—" : percent(saving), "Measured reduction from the cold answer arm to exact-cache traffic.", "orange"],
-    ["Trace overhead", latency(trace.p95_ms), `${trace.valid_lines ?? 0}/${trace.writes ?? 0} valid records; Rule O ${trace.rule_o ? "passed" : "unmeasured"}.`, ""],
-  ];
-  $("#system-cards").innerHTML = systemCards.map(([title, value, copy, style]) => `<article class="system-card ${style}"><span class="kicker">${escape(title)}</span><strong class="big">${escape(value)}</strong><p>${escape(copy)}</p></article>`).join("");
+  showWorkspace(location.hash.slice(1) || "chat");
+  conversations = readConversations();
+  if (conversations.length) openConversation(conversations[0].id);
+  else startConversation();
+  renderBenchmarks();
+  refreshDashboard();
+  window.setInterval(refreshDashboard, 30000);
 })();

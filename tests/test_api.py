@@ -176,3 +176,9 @@ def test_metrics_returns_an_empty_content_free_snapshot() -> None:
     assert response.status_code == 200
     assert response.json()["total"] == 0
     assert "question" not in response.json()
+
+
+def test_api_does_not_claim_frontend_routes() -> None:
+    response = client(authenticated=False).get("/")
+
+    assert response.status_code == 404

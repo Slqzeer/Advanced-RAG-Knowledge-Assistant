@@ -124,6 +124,12 @@ de retrieval, la latence, l'usage de tokens, les avertissements, le motif évent
 de refus et la couche de cache utilisée. Swagger UI est disponible sur
 `http://localhost:8000/docs`.
 
+L'interface web unifie le chat, la santé du service, les métriques live et les
+benchmarks versionnés. Elle est servie par l'image `rag-ui` sur
+`http://localhost:8080/`; son proxy Nginx relaie les appels vers l'image `rag-api`,
+ce qui évite une configuration CORS séparée. La clé API saisie dans les paramètres
+de connexion reste limitée à l'onglet du navigateur (`sessionStorage`).
+
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/metrics
