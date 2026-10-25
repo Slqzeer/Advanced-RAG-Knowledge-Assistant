@@ -3,18 +3,18 @@
 The single place that answers: where is this project, what comes next, and why.
 
 - **Brief:** [`information.md`](../information.md) — the original 30-step learning order.
-- **Public front page:** [`README.md`](../README.md) (French) — phases 0-20.
+- **Public front page:** [`README.md`](../README.md) (French) — the finished system.
 - **Step plans:** [`docs/superpowers/plans/`](superpowers/plans/) — one executable plan per step.
 
 ## Current state
 
-**Phase 0 and steps 02-29 are done. Step 28 runs the 95% coverage gate and the
-real retrieval regression in GitHub Actions; the first post-merge `main` run passed
-both jobs against the pinned corpus. Step 29 turns 64 committed history rows into
-63 labelled dashboard views without rerunning or inventing a metric. The offline
-dashboard compares retrieval quality and latency, RAGAS answer rows, cache, and
-observability while excluding all per-question and per-probe evidence from its
-browser snapshot. Step 30 (the professional README) is next.**
+**All 30 steps are done. Step 28 runs the 95% coverage gate and the real retrieval
+regression in GitHub Actions; the first post-merge `main` run passed both jobs
+against the pinned corpus. Step 29 turns 64 committed history rows into 63 labelled
+dashboard views without rerunning or inventing a metric. Step 30 replaces the
+chronological 2,398-line build log with a professional front page: verified CI,
+architecture, reproducible setup, API contract, measured results, deliberate
+defaults, limitations, and links back to the full evidence.**
 
 Shipped and verified:
 
@@ -50,9 +50,10 @@ Shipped and verified:
 | Metadata filtering | `app/ingestion/loader.py`, `app/retrieval/search.py` — `doc_type` derived from the corpus layout, indexed, filterable through a generic `filters=` mapping; per-facet recall and an oracle run recording the ceiling on facet routing at **+0.000 Recall@5** |
 | FastAPI service | `app/api/{main,models}.py`, `app/ingestion/index.py`, `app/observability/metrics.py` — `POST /query`, `POST /documents`, `GET /health`, `GET /metrics`; existing pipeline, cache and traces reused, 10 endpoint/index tests plus Qdrant replacement coverage, no new dependency. |
 | Docker application | `docker/Dockerfile`, `.dockerignore`, `compose.yaml` — locked Python 3.12 image, UID/GID 10001, API + Qdrant + Redis health ordering, loopback ports and persistent runtime data. Verified from empty volumes: 156 files fetched, 1,526 chunks indexed, real query then exact hit, document replacement 28 → 2 chunks, and all data retained across forced container recreation; `/health` and `/metrics` return 200. |
-| Test gates | `app/evaluation/regression.py`, `pytest-cov`, `scripts/benchmark.py --gate-against` — 648 non-paid tests, 96.06% application branch coverage against a 95% floor, and a real 45-question run reproducing Recall@5 0.768, Recall@10 0.805, Recall@20 0.814, and MRR 0.810. |
+| Test gates | `app/evaluation/regression.py`, `pytest-cov`, `scripts/benchmark.py --gate-against` — 653 non-paid tests, 95.79% application branch coverage in the step-30 verification against a 95% floor, and a real 45-question run reproducing Recall@5 0.768, Recall@10 0.805, Recall@20 0.814, and MRR 0.810. |
 | CI gates | `.github/workflows/ci.yml` — quality/coverage on pull requests and `main`; pinned-corpus Qdrant regression on `main` and manual runs. First post-merge run passed both jobs. |
 | Benchmark dashboard | `dashboard/index.html`, `app/evaluation/dashboard.py`, `scripts/build_dashboard.py` — 64 history rows condensed into 63 aggregate-only labelled views, offline and dependency-free. |
+| Professional README | `README.md` — CI status, architecture, Docker/local quick starts, API, measured decisions, limitations, and evidence links. |
 
 The loop is closed, verified, measured and served: a question goes in through `POST /query`, and the existing pipeline returns a grounded answer with resolved citations. The CLI remains available through `scripts/ask.py`.
 
@@ -103,7 +104,7 @@ Four things later steps own:
 | 27 | Phase 17 — Tests | — | **Done:** 95% branch-coverage floor and a measured RAG regression gate against the shipped row. |
 | 28 | Phase 17 — CI | — | **Done:** the quality/coverage and pinned-corpus retrieval-regression jobs both pass on `main`. |
 | 29 | — | — | **Done:** offline dashboard over 64 versioned runs, with retrieval, answer, cache, and observability views. |
-| 30 | — | — | The professional README that tells the whole story. |
+| 30 | — | — | **Done:** a concise professional README that explains, runs, measures, and scopes the finished system. |
 
 **The tag column past step 20 is provisional.** It was written to track README phase
 numbers rather than step order, which is why it read `v1.3` at step 21 and `v1.0` at
@@ -113,7 +114,7 @@ lands rather than promised here. Step 21 took **`v1.1`**.
 
 ## Plans written so far
 
-Detailed, executable plans exist for steps 02-29:
+Detailed, executable plans exist for steps 02-30:
 
 | Step | Plan |
 |---|---|
@@ -142,9 +143,10 @@ Detailed, executable plans exist for steps 02-29:
 | 27 Tests | [`2026-10-25-step-27-tests.md`](superpowers/plans/2026-10-25-step-27-tests.md) |
 | 28 CI/CD | [`2026-10-25-step-28-ci.md`](superpowers/plans/2026-10-25-step-28-ci.md) |
 | 29 Benchmark dashboard | [`2026-10-25-step-29-benchmark-dashboard.md`](superpowers/plans/2026-10-25-step-29-benchmark-dashboard.md) |
+| 30 Professional README | [`2026-10-25-step-30-professional-readme.md`](superpowers/plans/2026-10-25-step-30-professional-readme.md) |
 
-**Step 30 is deliberately unplanned.** It is written at the start of its own step,
-with the completed dashboard and recorded results in hand.
+The sequence is complete. Future work starts from measured limitations rather than
+extending the original checklist.
 
 ## How a step lands
 
